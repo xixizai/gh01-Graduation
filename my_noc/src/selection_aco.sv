@@ -42,7 +42,7 @@ module selection_aco#(
    // ===========================================================================================================================
 
    always_comb begin
-      if(~reset_n)begin // 复位
+      //if(~reset_n)begin // 复位
          rand_seed = '0;
          rand_num = '0;
 
@@ -55,7 +55,7 @@ module selection_aco#(
          l_dest = '0;
 
          o_output_req = '0;
-      end else begin
+      //end else begin
          for(int i=0;i<`N;i++)begin
             rand_seed[i] = (rand_seed[i] == 11111) ? 0 : rand_seed[i] + 1; // 0到11111循换
             rand_num[i] = (i_avail_directions[i][`M-1] == 0) ? 3 : rand_seed % i_avail_directions[i][`M-1]; // 生成随机数
@@ -96,8 +96,8 @@ module selection_aco#(
 //             end else begin//(is not ant packet and table.d is not avail) begin:calculate by XY-random router
                   // 随机选择
                   for(int j = 0; j < `N; j++) begin
-                     //o_output_req[i][j] = (j == i_avail_directions[i][0] + 1) ? 1 : 0; // 选择第一个
-                     o_output_req[i][j] = (j == (i_avail_directions[i][rand_num[i]] + 1) ) ? 1 : 0;
+                     o_output_req[i][j] = (j == i_avail_directions[i][0] + 1) ? 1 : 0; // 选择第一个
+                     //o_output_req[i][j] = (j == (i_avail_directions[i][rand_num[i]] + 1) ) ? 1 : 0;
                   end
 //             end
             end else if(i_update[i]) begin
@@ -110,7 +110,7 @@ module selection_aco#(
                end
             end
          end
-      end
+      //end
    end
 endmodule
 

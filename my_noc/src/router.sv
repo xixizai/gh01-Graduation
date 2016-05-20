@@ -23,16 +23,16 @@ module router #(
    
    output logic [0:`N-1] test_en_SCtoFF,
    
-   output  packet_t [0:`N-1] test_data_FFtoAA,
-   output  logic [0:`N-1] test_data_val_FFtoAA, 
+   output packet_t [0:`N-1] test_data_FFtoAA,
+   output logic [0:`N-1] test_data_val_FFtoAA, 
    
    output packet_t [0:`N-1] test_data_AAtoSW,
    
-   output logic [0:`N-1] test_data_val_AAtoRC,
    output logic [0:`N-1][0:`M-1] test_output_req_AAtoSC,
    
    output logic [0:`N-1][0:`M-1] test_l_req_matrix_SC,
    
+   output logic [0:`N-1][0:`M-1] test_l_output_req,
    output logic [0:`N-1]test_routing_calculate,
    output logic [0:`N-1]test_update,
    output logic [0:`N-1]test_select_neighbor,
@@ -55,7 +55,6 @@ module router #(
    packet_t [0:`N-1] l_data_AAtoSW; // data, agent -> switch
 
    logic [0:`N-1] l_data_val_FFtoAA; // data val, fifo -> agent
-   logic [0:`N-1] l_data_val_AAtoRC; // data val, agent -> none
 
    logic [0:`N-1][0:`M-1] l_output_req_AAtoSC; // Request, agent -> switch control
    logic [0:`M-1][0:`N-1] l_output_grant_SCtoSW; // 控制switch输出数据、通知下游路由接收数据的Grant, switch control -> switch 、o_data_val  
@@ -86,12 +85,14 @@ module router #(
    ant_agent #(.X_LOC(X_LOC), .Y_LOC(Y_LOC))
       ant_agent(
 		         .reset_n(reset_n),
+               .i_en(i_en),
 		         .i_data(l_data_FFtoAA), 
 		         .i_data_val(l_data_val_FFtoAA),
 		         .o_data(l_data_AAtoSW),
-		         .o_data_val(),//l_data_val_AAtoRC
+					.o_data_val(),
 		         .o_output_req(l_output_req_AAtoSC),
 		         
+		         .test_l_output_req(test_l_output_req),
 		         .test_routing_calculate(test_routing_calculate),
 		         .test_update(test_update),
 		         .test_select_neighbor(test_select_neighbor),
@@ -136,7 +137,6 @@ module router #(
    
    assign test_data_AAtoSW=l_data_AAtoSW;
    
-   assign test_data_val_AAtoRC=l_data_val_AAtoRC;
    assign test_output_req_AAtoSC=l_output_req_AAtoSC;
    
    // Output to downstream routers that the switch data is valid.  l_output_grant_SCtoSW[output number] is a onehot vector, thus

@@ -14,38 +14,36 @@
 
 module network
 (
-  input logic clk, reset_n,
-  
-  input packet_t [0:`NODES-1] i_data,  // 输入，PE结点 -> network
-  input logic [0:`NODES-1] i_data_val, // 输入，指出输入端口（i_data）是否有数据输入
-  output logic [0:`NODES-1] o_en,      // 输出，输入端口（i_data）的使能信号
-  
-  output packet_t [0:`NODES-1] o_data,  // 输出，network -> PE结点
-  output logic [0:`NODES-1] o_data_val, // 输出，指出输出端口（o_data）是否有数据输出
-  
-  output logic [0:`NODES-1][0:`N-1] test_en_SCtoFF,
-  
-  output packet_t [0:`NODES-1][0:`N-1] test_data_FFtoAA,
-  output logic [0:`NODES-1][0:`N-1] test_data_val_FFtoAA,
-  
-  output packet_t [0:`NODES-1][0:`N-1] test_data_AAtoSW,
-  
-  output logic [0:`NODES-1][0:`N-1] test_data_val_AAtoRC,
-  output logic [0:`NODES-1][0:`N-1][0:`M-1] test_output_req_AAtoRC,
-  
-  output logic [0:`NODES-1][0:`N-1][0:`M-1] test_output_req_RCtoSC,
-  
-  output logic [0:`NODES-1][0:`N-1][0:`M-1] test_l_req_matrix_SC,
-  
-  output logic [0:`NODES-1][0:`N-1] test_routing_calculate,
-  output logic [0:`NODES-1][0:`N-1] test_update,
-  output logic [0:`NODES-1][0:`N-1] test_select_neighbor,
-  output logic [0:`NODES-1][0:`N-1][0:`M-1] test_tb_o_output_req,
-  
-  output logic [0:`NODES-1][0:`NODES-1][0:`N-2][`PH_TABLE_DEPTH-1:0] test_pheromones,
-  output logic [0:`NODES-1][`PH_TABLE_DEPTH-1:0] test_max_pheromone_value,
-  output logic [0:`NODES-1][`PH_TABLE_DEPTH-1:0] test_min_pheromone_value,
-  output logic [0:`NODES-1][0:`N-1][0:`M-1][1:0] test_avail_directions
+   input logic clk, reset_n,
+   
+   input packet_t [0:`NODES-1] i_data,  // 输入，PE结点 -> network
+   input logic [0:`NODES-1] i_data_val, // 输入，指出输入端口（i_data）是否有数据输入
+   output logic [0:`NODES-1] o_en,      // 输出，输入端口（i_data）的使能信号
+   
+   output packet_t [0:`NODES-1] o_data,  // 输出，network -> PE结点
+   output logic [0:`NODES-1] o_data_val, // 输出，指出输出端口（o_data）是否有数据输出
+   
+   output logic [0:`NODES-1][0:`N-1] test_en_SCtoFF,
+   
+   output packet_t [0:`NODES-1][0:`N-1] test_data_FFtoAA,
+   output logic [0:`NODES-1][0:`N-1] test_data_val_FFtoAA,
+   
+   output packet_t [0:`NODES-1][0:`N-1] test_data_AAtoSW,
+   
+   output logic [0:`NODES-1][0:`N-1][0:`M-1] test_output_req_AAtoSC,
+   
+   output logic [0:`NODES-1][0:`N-1][0:`M-1] test_l_req_matrix_SC,
+   
+   output logic [0:`NODES-1][0:`N-1][0:`M-1] test_l_output_req,
+   output logic [0:`NODES-1][0:`N-1] test_routing_calculate,
+   output logic [0:`NODES-1][0:`N-1] test_update,
+   output logic [0:`NODES-1][0:`N-1] test_select_neighbor,
+   output logic [0:`NODES-1][0:`N-1][0:`M-1] test_tb_o_output_req,
+   
+   output logic [0:`NODES-1][0:`NODES-1][0:`N-2][`PH_TABLE_DEPTH-1:0] test_pheromones,
+   output logic [0:`NODES-1][`PH_TABLE_DEPTH-1:0] test_max_pheromone_value,
+   output logic [0:`NODES-1][`PH_TABLE_DEPTH-1:0] test_min_pheromone_value,
+   output logic [0:`NODES-1][0:`N-1][0:`M-1][1:0] test_avail_directions
 );
    
    // Network connections from which routers will read
@@ -112,12 +110,12 @@ module network
                        
                        .test_data_AAtoSW(test_data_AAtoSW[y*`X_NODES+x]),
                        
-                       .test_data_val_AAtoRC(test_data_val_AAtoRC[y*`X_NODES+x]),
-                       .test_output_req_AAtoSC(test_output_req_AAtoRC[y*`X_NODES+x]),
+                       .test_output_req_AAtoSC(test_output_req_AAtoSC[y*`X_NODES+x]),
                        
                        .test_l_req_matrix_SC(test_l_req_matrix_SC[y*`X_NODES+x]),
                        
                        
+		                 .test_l_output_req(test_l_output_req[y*`X_NODES+x]),
                        .test_routing_calculate(test_routing_calculate[y*`X_NODES+x]),
                        .test_update(test_update[y*`X_NODES+x]),
                        .test_select_neighbor(test_select_neighbor[y*`X_NODES+x]),

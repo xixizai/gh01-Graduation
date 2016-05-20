@@ -5,7 +5,7 @@
 // 针对router模块的testbench, 只查看 RX、TX 是否正常
 module tb_router_debug
 #(
-  parameter integer X = 1,
+  parameter integer X = 2,
   parameter integer Y = 1,
   parameter CLK_PERIOD = 100ps,
   parameter integer PACKET_RATE = 1 // 平均包注入率
@@ -52,14 +52,12 @@ module tb_router_debug
    logic    [0:`N-1] test_data_val_FFtoAA;
    // AAtoSW ---------------------------------------------------------------------
    packet_t [0:`N-1] test_data_AAtoSW;
-   // AAtoRC ---------------------------------------------------------------------
-   logic    [0:`N-1] test_data_val_AAtoRC;
-   logic    [0:`N-1][0:`M-1] test_output_req_AAtoRC;
-   // RCtoSC ---------------------------------------------------------------------
-   logic    [0:`N-1][0:`M-1] test_output_req_RCtoSC;
+   // AAtoSC ---------------------------------------------------------------------
+   logic    [0:`N-1][0:`M-1] test_output_req_AAtoSC;
    // SC.sv ----------------------------------------------------------------------
    logic    [0:`N-1][0:`M-1] test_l_req_matrix_SC;
    // AA.sv ----------------------------------------------------------------------
+   logic    [0:`N-1][0:`M-1] test_l_output_req;
    logic [0:`N-1]test_routing_calculate;
    logic    [0:`N-1] test_update;
    logic    [0:`N-1] test_select_neighbor;
@@ -98,11 +96,11 @@ module tb_router_debug
                   
                   .test_data_AAtoSW(test_data_AAtoSW),
                   
-                  .test_data_val_AAtoRC(test_data_val_AAtoRC),
-                  .test_output_req_AAtoSC(test_output_req_AAtoRC),
+                  .test_output_req_AAtoSC(test_output_req_AAtoSC),
 					 
                   .test_l_req_matrix_SC(test_l_req_matrix_SC),
                   
+		            .test_l_output_req(test_l_output_req),
                   .test_routing_calculate(test_routing_calculate),
                   .test_update(test_update),
                   .test_select_neighbor(test_select_neighbor),
@@ -152,23 +150,22 @@ module tb_router_debug
          f_x_src[1] <= $urandom_range(`X_NODES-1, 0);
          f_y_src[1] <= $urandom_range(`Y_NODES-1, Y+1);
          f_x_dest[1] <= X;
-         f_y_dest[1] <= $urandom_range(Y, 0);
+         f_y_dest[1] <= $urandom_range(Y-1, 0);//(Y, 0)
          
          f_x_src[2] <= $urandom_range(`X_NODES-1, X+1);
          f_y_src[2] <= Y;
-         f_x_dest[2] <= $urandom_range(X, 0);
+         f_x_dest[2] <= $urandom_range(X-1, 0);//(X, 0);
          f_y_dest[2] <= $urandom_range(`Y_NODES-1, 0);
          
          f_x_src[3] <= $urandom_range(`X_NODES-1, 0);
          f_y_src[3] <= $urandom_range(Y-1, 0);
          f_x_dest[3] <= X;
-         f_y_dest[3] <= $urandom_range(`Y_NODES-1, Y);
+         f_y_dest[3] <= $urandom_range(`Y_NODES-1, Y+1);//(`Y_NODES-1, Y)
          
          f_x_src[4] <= $urandom_range(X-1, 0);
          f_y_src[4] <= Y;
-         f_x_dest[4] <= $urandom_range(`X_NODES-1, X);
+         f_x_dest[4] <= $urandom_range(`X_NODES-1, X+1);//(`X_NODES-1, X)
          f_y_dest[4] <= $urandom_range(`Y_NODES-1, 0);
-			
       end
    end
    
@@ -273,7 +270,7 @@ module tb_router_debug
       forever@(posedge clk) begin
          if(f_time % 100 == 0) begin
             $display("f_time %g:  Transmitted %g packets, Received %g packets   0:%g  1:%g  2:%g  3:%g  4:%g",
-				                                               f_time, f_total_i_data_count, f_total_o_data_count,
+				             f_time,    f_total_i_data_count, f_total_o_data_count,
 				f_port_o_data_count[0],f_port_o_data_count[1],f_port_o_data_count[2],f_port_o_data_count[3],f_port_o_data_count[4]);
          end
       end

@@ -38,11 +38,11 @@ module tb_network_debug
    // 链接fifo模块（属于仿真的PE结点）端口的变量定义 ---------------------------------
    packet_t [0:`NODES-1] i_data_FF;     // 输入，仿真包，testbench 仿真PE结点-> fifo
    logic    [0:`NODES-1] i_data_val_FF; // 输入，仿真包信号，testbench 仿真PE结点-> fifo
-   logic    [0:`NODES-1][3:0] l_en_NtoFF;    // 输入，对应路由的使能信号，network -> fifo
+   logic    [0:`NODES-1] l_en_NtoFF;    // 输入，对应路由的使能信号，network -> fifo
    
    packet_t [0:`NODES-1] l_data_FFtoN;    // 输出，包，fifo -> network 中的对应路由
    logic    [0:`NODES-1] l_data_val_FFtoN;// 输出，包信号，fifo -> network 中的对应路由
-   logic    [0:`NODES-1][3:0] o_en_FF;         // 输出，fifo模块的使能信号，fifo->testbench 仿真PE结点
+   logic    [0:`NODES-1] o_en_FF;         // 输出，fifo模块的使能信号，fifo->testbench 仿真PE结点
    
    // 值为随机生成的变量 --------------------------------------
 	int rand_i;
@@ -137,14 +137,12 @@ module tb_network_debug
    logic    [0:`NODES-1][0:`N-1] test_data_val_FFtoAA;
    // AAtoSW ---------------------------------------------------------------------
    packet_t [0:`NODES-1][0:`N-1] test_data_AAtoSW;
-   // AAtoRC ---------------------------------------------------------------------
-   logic    [0:`NODES-1][0:`N-1] test_data_val_AAtoRC;
-   logic    [0:`NODES-1][0:`N-1][0:`M-1] test_output_req_AAtoRC;
-   // RCtoSC ---------------------------------------------------------------------
-   logic    [0:`NODES-1][0:`N-1][0:`M-1] test_output_req_RCtoSC;
+   // AAtoSC ---------------------------------------------------------------------
+   logic    [0:`NODES-1][0:`N-1][0:`M-1] test_output_req_AAtoSC;
    // SC.sv ----------------------------------------------------------------------
    logic    [0:`NODES-1][0:`N-1][0:`M-1] test_l_req_matrix_SC;
    // AA.sv ----------------------------------------------------------------------
+   logic    [0:`NODES-1][0:`N-1][0:`M-1] test_l_output_req;
    logic [0:`NODES-1][0:`N-1]test_routing_calculate;
    logic    [0:`NODES-1][0:`N-1] test_update;
    logic    [0:`NODES-1][0:`N-1] test_select_neighbor;
@@ -183,15 +181,13 @@ module tb_network_debug
 						
 						.test_data_AAtoSW(test_data_AAtoSW),
 						
-						.test_data_val_AAtoRC(test_data_val_AAtoRC),
-						.test_output_req_AAtoRC(test_output_req_AAtoRC),
-						
-						.test_output_req_RCtoSC(test_output_req_RCtoSC),
+						.test_output_req_AAtoSC(test_output_req_AAtoSC),
 						
 						.test_l_req_matrix_SC(test_l_req_matrix_SC),
 						
 						
-                                                .test_routing_calculate(test_routing_calculate),
+		            .test_l_output_req(test_l_output_req),
+                  .test_routing_calculate(test_routing_calculate),
 						.test_update(test_update),
 						.test_select_neighbor(test_select_neighbor),
 						.test_tb_o_output_req(test_tb_o_output_req),
@@ -199,7 +195,7 @@ module tb_network_debug
 						.test_pheromones(test_pheromones),
 						.test_max_pheromone_value(test_max_pheromone_value),
 						.test_min_pheromone_value(test_min_pheromone_value),
-                                                .test_avail_directions(test_avail_directions)
+                  .test_avail_directions(test_avail_directions)
    );
    
    // ============================================= 生成 各PE结点的 FIFO 模块 ===========================================================

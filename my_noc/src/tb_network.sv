@@ -3,6 +3,7 @@
 // 最终测试模块。
 // 测试 整个网络（network）总的 Tx 和 Rx, 和在 MEASURE_PACKETS 阶段的 Tx 和 Rx, 吞吐率, 包时延。
 // 在各个平均包注入率下测试
+
 module tb_network
 #(
    parameter CLK_PERIOD = 100ps, // 设置一个时钟周期为 100ps
@@ -132,13 +133,11 @@ module tb_network
    // AAtoSW ---------------------------------------------------------------------
    packet_t [0:`NODES-1][0:`N-1] test_data_AAtoSW;
    // AAtoRC ---------------------------------------------------------------------
-   logic    [0:`NODES-1][0:`N-1] test_data_val_AAtoRC;
-   logic    [0:`NODES-1][0:`N-1][0:`M-1] test_output_req_AAtoRC;
-   // RCtoSC ---------------------------------------------------------------------
-   logic    [0:`NODES-1][0:`N-1][0:`M-1] test_output_req_RCtoSC;
+   logic    [0:`NODES-1][0:`N-1][0:`M-1] test_output_req_AAtoSC;
    // SC.sv ----------------------------------------------------------------------
    logic    [0:`NODES-1][0:`N-1][0:`M-1] test_l_req_matrix_SC;
    // AA.sv ----------------------------------------------------------------------
+   logic    [0:`NODES-1][0:`N-1][0:`M-1] test_l_output_req;
    logic    [0:`NODES-1][0:`N-1]test_routing_calculate;
    logic    [0:`NODES-1][0:`N-1] test_update;
    logic    [0:`NODES-1][0:`N-1] test_select_neighbor;
@@ -177,15 +176,13 @@ module tb_network
 						
 						.test_data_AAtoSW(test_data_AAtoSW),
 						
-						.test_data_val_AAtoRC(test_data_val_AAtoRC),
-						.test_output_req_AAtoRC(test_output_req_AAtoRC),
-						
-						.test_output_req_RCtoSC(test_output_req_RCtoSC),
+						.test_output_req_AAtoSC(test_output_req_AAtoSC),
 						
 						.test_l_req_matrix_SC(test_l_req_matrix_SC),
 						
 						
-                                                .test_routing_calculate(test_routing_calculate),
+		            .test_l_output_req(test_l_output_req),
+                  .test_routing_calculate(test_routing_calculate),
 						.test_update(test_update),
 						.test_select_neighbor(test_select_neighbor),
 						.test_tb_o_output_req(test_tb_o_output_req),
@@ -193,7 +190,7 @@ module tb_network
 						.test_pheromones(test_pheromones),
 						.test_max_pheromone_value(test_max_pheromone_value),
 						.test_min_pheromone_value(test_min_pheromone_value),
-                                                .test_avail_directions(test_avail_directions)
+                  .test_avail_directions(test_avail_directions)
    );
    
    // ============================================= 生成 各PE结点的 FIFO 模块 ===========================================================
@@ -218,6 +215,7 @@ module tb_network
    // =================================================== 仿真数据生成 ==============================================================
    
    // 中间变量的生成（随机地） ------------------------------------------------------
+	
    // 随机目的地 ------------------
    always_ff@(posedge clk) begin
       if(~reset_n) begin
@@ -619,14 +617,14 @@ module tb_network
                   end
 					   
                   if(o_data_N[i].b_num_memories == 0) begin
-                     if(current_packet_latency > f_max_latency_forward) begin
+                     if(current_packet_latency > f_max_latency_forward) begin // o_data_N[i].backward == 0
                         f_max_latency_forward <= f_time - o_data_N[i].timestamp;
                      end
                      if(current_packet_latency > f_max_latency_backward)begin
                         f_max_latency_backward <= current_packet_latency;
                      end
                   end else begin
-                     if(o_data_N[i].b_num_memories == 1 && current_packet_latency > f_max_latency_forward) begin
+                     if(o_data_N[i].b_num_memories == 1 && current_packet_latency > f_max_latency_forward) begin // o_data_N[i].backward == 0
                         f_max_latency_forward <= f_time - o_data_N[i].timestamp;
                      end else begin
                         if(current_packet_latency > f_max_latency_backward)begin
@@ -726,3 +724,32 @@ module tb_network
       end
    end
 endmodule
+/*FYI.
+[2016-04-26 10:45:11] INFO - Overall:
+[2016-04-26 10:45:11] INFO -     # Total cycles: 435
+[2016-04-26 10:45:11] INFO -
+[2016-04-26 10:45:11] INFO -     # Packets received: 145, # packets transmitted: 145
+[2016-04-26 10:45:11] INFO -     Throughput: 0.333333 packets/cycle
+[2016-04-26 10:45:11] INFO -     Average packet latency: 118.937931 cycles/packet
+[2016-04-26 10:45:11] INFO -     Max packet latency: 314.000000 cycles/packet
+[2016-04-26 10:45:11] INFO -
+[2016-04-26 10:45:11] INFO - ACOPacket:
+[2016-04-26 10:45:11] INFO -     # Packets received: 96, # packets transmitted: 96
+[2016-04-26 10:45:11] INFO -     Throughput: 0.220690 packets/cycle
+[2016-04-26 10:45:11] INFO -     Average packet latency: 76.517241 cycles/packet
+[2016-04-26 10:45:11] INFO -     Max packet latency: 314.000000 cycles/packet
+[2016-04-26 10:45:11] INFO -
+[2016-04-26 10:45:11] INFO - Packet:
+[2016-04-26 10:45:11] INFO -     # Packets received: 49, # packets transmitted: 49
+[2016-04-26 10:45:11] INFO -     Throughput: 0.112644 packets/cycle
+[2016-04-26 10:45:11] INFO -     Average packet latency: 42.420690 cycles/packet
+[2016-04-26 10:45:11] INFO -     Max packet latency: 298.000000 cycles/packet
+
+1. add comments
+2. the above statistics
+3. record each packet (normal packet and ACO packet) 's memory and debug
+
+forward packet 到了也得打出来以下信息：
+
+[<current_cycle>] packet_id: <>, memory: [,,,], timestamp: <>, latency: <>*/
+

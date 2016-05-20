@@ -25,13 +25,11 @@ module alinx_top(
    // AAtoSW ---------------------------------------------------------------------
    packet_t [0:`NODES-1][0:`N-1] test_data_AAtoSW;
    // AAtoRC ---------------------------------------------------------------------
-   logic    [0:`NODES-1][0:`N-1] test_data_val_AAtoRC;
-   logic    [0:`NODES-1][0:`N-1][0:`M-1] test_output_req_AAtoRC;
-   // RCtoSC ---------------------------------------------------------------------
-   logic    [0:`NODES-1][0:`N-1][0:`M-1] test_output_req_RCtoSC;
+   logic    [0:`NODES-1][0:`N-1] test_data_val_AAtoSC;
    // SC.sv ----------------------------------------------------------------------
    logic    [0:`NODES-1][0:`N-1][0:`M-1] test_l_req_matrix_SC;
    // AA.sv ----------------------------------------------------------------------
+   logic    [0:`NODES-1][0:`N-1][0:`M-1] test_l_output_req;
    logic    [0:`NODES-1][0:`N-1]test_routing_calculate;
    logic    [0:`NODES-1][0:`N-1] test_update;
    logic    [0:`NODES-1][0:`N-1] test_select_neighbor;
@@ -59,13 +57,11 @@ module alinx_top(
                    
                    .test_data_AAtoSW(test_data_AAtoSW),
                    
-                   .test_data_val_AAtoRC(test_data_val_AAtoRC),
-                   .test_output_req_AAtoRC(test_output_req_AAtoRC),
-                   
-                   .test_output_req_RCtoSC(test_output_req_RCtoSC),
+                   .test_output_req_AAtoSC(test_output_req_AAtoSC),
                    
                    .test_l_req_matrix_SC(test_l_req_matrix_SC),
                    
+		             .test_l_output_req(test_l_output_req),
                    .test_routing_calculate(test_routing_calculate),
                    .test_update(test_update),
                    .test_select_neighbor(test_select_neighbor),

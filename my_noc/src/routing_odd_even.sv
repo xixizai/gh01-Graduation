@@ -24,14 +24,14 @@ module routing_odd_even#(
    //logic [0:`N-1][$clog2(`Y_NODES)-1:0] e1;
 
    always_comb begin
-      o_select_neighbor = '0;
-      o_avail_directions = '0;
+      o_select_neighbor = 5'b0;
+      o_avail_directions = 5'b0;
       for(int i=0;i<`N;i++)begin
          //e0[i] = i_x_dest[i] - X_LOC;
          //e1[i] = i_y_dest[i] - Y_LOC;
          if(i_routing_calculate[i])begin
-            if(i_x_dest[i] == X_LOC[i]) begin // x坐标到达目的地
-               if(i_y_dest[i] > Y_LOC[i]) begin // if（目的地y坐标 > 当前坐标）
+            if(i_x_dest[i] == X_LOC) begin // x坐标到达目的地
+               if(i_y_dest[i] > Y_LOC) begin // if（目的地y坐标 > 当前坐标）
                   o_avail_directions[i][o_avail_directions[i][`M-1]] = 1-1; // directions.push_back(DIRECTION_NORTH);
                   o_avail_directions[i][`M-1] = o_avail_directions[i][`M-1] + 1;
                end else begin // else（目的地y坐标 < 当前坐标）
@@ -39,13 +39,13 @@ module routing_odd_even#(
                   o_avail_directions[i][`M-1] = o_avail_directions[i][`M-1] + 1;
                end
             end else begin
-               if(i_x_dest[i] > X_LOC[i]) begin // if（目的地x坐标 > 当前坐标）
+               if(i_x_dest[i] > X_LOC) begin // if（目的地x坐标 > 当前坐标）
                   if(i_y_dest[i] == Y_LOC) begin // if（目的地y坐标 == 当前坐标）
                      o_avail_directions[i][o_avail_directions[i][`M-1]] = 2-1; // directions.push_back(DIRECTION_EAST);
                      o_avail_directions[i][`M-1] = o_avail_directions[i][`M-1] + 1;
                   end else begin
                      if((X_LOC % 2 == 1) || (X_LOC == i_x_source[i])) begin // if（当前x坐标为奇 或 当前x坐标==源点x坐标）
-                        if(i_y_dest[i] > Y_LOC[i]) begin // if（目的地y坐标 > 当前坐标）
+                        if(i_y_dest[i] > Y_LOC) begin // if（目的地y坐标 > 当前坐标）
                            o_avail_directions[i][o_avail_directions[i][`M-1]] = 1-1; // directions.push_back(DIRECTION_NORTH);
                            o_avail_directions[i][`M-1] = o_avail_directions[i][`M-1] + 1;
                         end else begin // else（目的地y坐标 < 当前坐标）
@@ -62,11 +62,11 @@ module routing_odd_even#(
                   o_avail_directions[i][o_avail_directions[i][`M-1]] = 4-1; // directions.push_back(DIRECTION_WEST);
                   o_avail_directions[i][`M-1] = o_avail_directions[i][`M-1] + 1;
                   if(X_LOC % 2 == 0) begin // if（当前x坐标为偶)
-                     if(i_y_dest[i] > Y_LOC[i]) begin // if（目的地y坐标 > 当前坐标）
+                     if(i_y_dest[i] > Y_LOC) begin // if（目的地y坐标 > 当前坐标）
                         o_avail_directions[i][o_avail_directions[i][`M-1]] = 1-1; // directions.push_back(DIRECTION_NORTH);
                         o_avail_directions[i][`M-1] = o_avail_directions[i][`M-1] + 1;
                      end
-                     if(i_y_dest[i] < Y_LOC[i]) begin // if（目的地y坐标 < 当前坐标）
+                     if(i_y_dest[i] < Y_LOC) begin // if（目的地y坐标 < 当前坐标）
                         o_avail_directions[i][o_avail_directions[i][`M-1]] = 3-1; // directions.push_back(DIRECTION_SOUTH);
                         o_avail_directions[i][`M-1] = o_avail_directions[i][`M-1] + 1;
                      end
