@@ -1,0 +1,21 @@
+{
+    "aco_packet_injection_rate": 1,
+    "enable_debugging": false,
+    "link_delay": 1,
+    "link_width": 4,
+    "max_cycles": 1000,
+    "max_injection_buffer_size": 32,
+    "max_input_buffer_size": 20,
+    "max_packets": -1,
+    "no_drain": true,
+    "num_nodes": 64,
+    "num_virtual_channels": 4,
+    "packet_injection_rate": 1,
+    "packet_size": 16,
+    "rand_seed": 13,
+    "reinforcement_factor": 0.05,
+    "result_dir": "results/j_1/t_uniform/r_odd_even/s_aco/",
+    "routing": "odd_even",
+    "selection": "aco",
+    "traffic": "uniform"
+}
