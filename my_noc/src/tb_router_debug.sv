@@ -5,10 +5,10 @@
 // 针对router模块的testbench, 只查看 RX、TX 是否正常
 module tb_router_debug
 #(
-  parameter integer X = 2,
+  parameter integer X = 1,
   parameter integer Y = 1,
   parameter CLK_PERIOD = 100ps,
-  parameter integer PACKET_RATE = 1 // 平均包注入率
+  parameter integer PACKET_RATE = 5 // 平均包注入率
   
 //  parameter integer WARMUP_PACKETS = 1000, // Number of packets to warm-up the network
 //  parameter integer MEASURE_PACKETS = 5000, // Number of packets to be measured
@@ -44,40 +44,45 @@ module tb_router_debug
    integer f_total_i_data_count;              // Count total number of transmitted packets
    integer f_total_o_data_count;              // Count total number of received packets
 
-   // ================================================ test port definition ===========================================================
+   // ==============================================  router module definition  =========================================================
 	
+   // -------------------------------- IO port definition ---------------------------------
+   //logic [0:`M-1][3:0] l_i_en;
+   packet_t [0:`N-1] l_i_data;
+   logic [0:`N-1] l_i_data_val;
+   
+   logic [0:`N-1][3:0] l_o_en;
+   packet_t [0:`M-1] l_o_data;
+   logic [0:`M-1] l_o_data_val;
+   
+   // ------------------------------- test port definition ---------------------------------
+   
    logic    [0:`N-1] test_en_SCtoFF;
-   // FFtoAA ---------------------------------------------------------------------
-   packet_t [0:`N-1] test_data_FFtoAA;
+   // data_val -------------------------------------------------------------------
    logic    [0:`N-1] test_data_val_FFtoAA;
-   // AAtoSW ---------------------------------------------------------------------
+   // data -----------------------------------------------------------------------
+   packet_t [0:`N-1] test_data_FFtoAA;
    packet_t [0:`N-1] test_data_AAtoSW;
+   // routing --------------------------------------------------------------------
+   logic    [0:`N-1] test_routing_calculate;
+   logic    [0:`N-1][0:`M-1][1:0] test_avail_directions;
+   // selection ------------------------------------------------------------------
+   logic    [0:`N-1] test_update;
+   logic    [0:`N-1] test_select_neighbor;
+   logic    [0:`NODES-1][0:`N-2][`PH_TABLE_DEPTH-1:0] test_pheromones;
+   logic    [0:`N-1][0:`PH_TABLE_DEPTH-1] test_max_pheromone_value;
+   logic    [0:`N-1][0:`PH_TABLE_DEPTH-1] test_min_pheromone_value;
+   logic [0:`N-1][$clog2(`N)-1:0] test_max_pheromone_column;
+   logic [0:`N-1][$clog2(`N)-1:0] test_min_pheromone_column;
+   logic    [0:`N-1][0:`M-1] test_tb_o_output_req;
+   // AA.sv ----------------------------------------------------------------------
+   logic    [0:`N-1][0:`M-1] test_l_output_req;
    // AAtoSC ---------------------------------------------------------------------
    logic    [0:`N-1][0:`M-1] test_output_req_AAtoSC;
    // SC.sv ----------------------------------------------------------------------
    logic    [0:`N-1][0:`M-1] test_l_req_matrix_SC;
-   // AA.sv ----------------------------------------------------------------------
-   logic    [0:`N-1][0:`M-1] test_l_output_req;
-   logic [0:`N-1]test_routing_calculate;
-   logic    [0:`N-1] test_update;
-   logic    [0:`N-1] test_select_neighbor;
-   logic    [0:`N-1][0:`M-1] test_tb_o_output_req;
-   // ant_routing_table.sv --------------------------------------------------------
-   logic    [0:`NODES-1][0:`N-2][`PH_TABLE_DEPTH-1:0] test_pheromones;
-   logic    [0:`PH_TABLE_DEPTH-1] test_max_pheromone_value;
-   logic    [0:`PH_TABLE_DEPTH-1] test_min_pheromone_value;
-   logic [0:`N-1][0:`M-1][1:0] test_avail_directions;
-     
-   // ------------------------------------------------------------------------------------------------------------------
-   
-   packet_t [0:`N-1] l_i_data;
-   logic [0:`N-1] l_i_data_val;
-   logic [0:`N-1] l_o_en;
-   
-   packet_t [0:`M-1] l_o_data;
-   logic [0:`M-1] l_o_data_val;
-   //logic [0:`M-1] l_i_en;
-   // ------------------------------------------------------------------------------------------------------------------
+	
+   // =====================================================  router module  ===========================================================
    router #(.X_LOC(X), .Y_LOC(Y))
       gen_router (
                   .clk(clk),
@@ -87,7 +92,7 @@ module tb_router_debug
                   .o_en(l_o_en),              // To the upstream routers
                   .o_data(l_o_data),         // To the downstream routers
                   .o_data_val(l_o_data_val), // To the downstream routers
-                  .i_en(5'b11111),             // From the downstream routers
+                  .i_en(20'b11111111111111111111),             // From the downstream routers
                   
                   .test_en_SCtoFF(test_en_SCtoFF),
                   
@@ -109,6 +114,8 @@ module tb_router_debug
                   .test_pheromones(test_pheromones),
                   .test_max_pheromone_value(test_max_pheromone_value),
                   .test_min_pheromone_value(test_min_pheromone_value),
+  .test_max_pheromone_column(test_max_pheromone_column),
+  .test_min_pheromone_column(test_min_pheromone_column),
                   .test_avail_directions(test_avail_directions)
                  );
    // SIMULATION:  System Clock

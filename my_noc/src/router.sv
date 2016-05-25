@@ -9,41 +9,42 @@ module router #(
 (
    input logic clk, reset_n,
    
-   // Upstream Bus.
    // ------------------------------------------------------------------------------------------------------------------
+   input  logic [0:`N-1][3:0] i_en,  // 输入，输出端口（o_data）的使能信号 [local, north, east, south, west]
    input  packet_t [0:`N-1] i_data,  // 输入，数据端口 [local, north, east, south, west]
    input  logic [0:`N-1] i_data_val, // 输入，指出输入端口（i_data）是否有数据输入 [local, north, east, south, west]
-   output logic [0:`M-1] o_en,  // 输出，输入端口（i_data）的使能信号 [local, north, east, south, west]
    
-   // Downstream Bus
-   // ------------------------------------------------------------------------------------------------------------------
+   output logic [0:`M-1][3:0] o_en,  // 输出，输入端口（i_data）的使能信号 [local, north, east, south, west]
    output packet_t [0:`M-1] o_data,  // 输出，数据端口 [local, north, east, south, west]
    output logic [0:`M-1] o_data_val, // 输出，指出输出端口（o_data）是否有数据输出 [local, north, east, south, west]
-   input  logic [0:`N-1] i_en,  // 输入，输出端口（o_data）的使能信号 [local, north, east, south, west]
    
-   output logic [0:`N-1] test_en_SCtoFF,
-   
+   // ------------------------------- test port definition ---------------------------------
+   output logic    [0:`N-1] test_en_SCtoFF,
+   // data_val -----------------------------------------------------------------------
+   output logic    [0:`N-1] test_data_val_FFtoAA,
+   // data ----------------------------------------------------------------------
    output packet_t [0:`N-1] test_data_FFtoAA,
-   output logic [0:`N-1] test_data_val_FFtoAA, 
-   
    output packet_t [0:`N-1] test_data_AAtoSW,
-   
-   output logic [0:`N-1][0:`M-1] test_output_req_AAtoSC,
-   
-   output logic [0:`N-1][0:`M-1] test_l_req_matrix_SC,
-   
-   output logic [0:`N-1][0:`M-1] test_l_output_req,
-   output logic [0:`N-1]test_routing_calculate,
-   output logic [0:`N-1]test_update,
-   output logic [0:`N-1]test_select_neighbor,
-   output logic [0:`N-1][0:`M-1] test_tb_o_output_req,
-   
-   output logic [0:`NODES-1][0:`N-2][`PH_TABLE_DEPTH-1:0] test_pheromones,
-   output logic [`PH_TABLE_DEPTH-1:0] test_max_pheromone_value,
-   output logic [`PH_TABLE_DEPTH-1:0] test_min_pheromone_value,
-   output logic [0:`N-1][0:`M-1][1:0] test_avail_directions
-);  
-  
+   // routing_odd_even ----------------------------------------------------------
+   output logic    [0:`N-1] test_routing_calculate,
+   output logic    [0:`N-1][0:`M-1][1:0] test_avail_directions,
+   // selection_aco -------------------------------------------------------------
+   output logic    [0:`N-1] test_update,
+   output logic    [0:`N-1] test_select_neighbor,
+   output logic    [0:`NODES-1][0:`N-2][`PH_TABLE_DEPTH-1:0] test_pheromones,
+   output logic    [0:`N-1][0:`PH_TABLE_DEPTH-1] test_max_pheromone_value,
+   output logic    [0:`N-1][0:`PH_TABLE_DEPTH-1] test_min_pheromone_value,
+  output logic [0:`N-1][$clog2(`N)-1:0] test_max_pheromone_column,
+  output logic [0:`N-1][$clog2(`N)-1:0] test_min_pheromone_column,
+   output logic    [0:`N-1][0:`M-1] test_tb_o_output_req,
+   // AA.sv ----------------------------------------------------------------------
+   output logic    [0:`N-1][0:`M-1] test_l_output_req,
+   // AAtoSC ---------------------------------------------------------------------
+   output logic    [0:`N-1][0:`M-1] test_output_req_AAtoSC,
+   // SC.sv ----------------------------------------------------------------------
+   output logic    [0:`N-1][0:`M-1] test_l_req_matrix_SC
+);
+
    // Clock Enable.  For those modules that require it. ------------------------------------------------------------------------------
    logic ce=1'b1;
 
@@ -51,13 +52,22 @@ module router #(
 
    logic [0:`N-1] l_en_SCtoFF; // 控制fifo输出数据的使能信号en, switch -> fifo
 
+   logic [0:`N-1] l_data_val_FFtoAA; // data val, fifo -> agent
+
    packet_t [0:`N-1] l_data_FFtoAA; // data, fifo -> agent
    packet_t [0:`N-1] l_data_AAtoSW; // data, agent -> switch
 
-   logic [0:`N-1] l_data_val_FFtoAA; // data val, fifo -> agent
-
    logic [0:`N-1][0:`M-1] l_output_req_AAtoSC; // Request, agent -> switch control
    logic [0:`M-1][0:`N-1] l_output_grant_SCtoSW; // 控制switch输出数据、通知下游路由接收数据的Grant, switch control -> switch 、o_data_val  
+	
+   assign test_en_SCtoFF=l_en_SCtoFF;
+   
+   assign test_data_val_FFtoAA=l_data_val_FFtoAA; // Validates data from upstream [local, north, east, south, west]
+   
+   assign test_data_FFtoAA=l_data_FFtoAA; // Input data from upstream [local, north, east, south, west]
+   assign test_data_AAtoSW=l_data_AAtoSW;
+   
+   assign test_output_req_AAtoSC=l_output_req_AAtoSC;
 
    // --------------------------------------------------------------------------------------------------------------------------------
 
@@ -101,6 +111,8 @@ module router #(
 		         .test_pheromones(test_pheromones),
 		         .test_max_pheromone_value(test_max_pheromone_value),
 		         .test_min_pheromone_value(test_min_pheromone_value),
+  .test_max_pheromone_column(test_max_pheromone_column),
+  .test_min_pheromone_column(test_min_pheromone_column),
 		         .test_avail_directions(test_avail_directions)
                );
 
@@ -129,15 +141,6 @@ module router #(
             .i_data(l_data_AAtoSW),
             .o_data(o_data)
             );
-  
-   assign test_en_SCtoFF=l_en_SCtoFF;
-   
-   assign test_data_FFtoAA=l_data_FFtoAA; // Input data from upstream [local, north, east, south, west]
-   assign test_data_val_FFtoAA=l_data_val_FFtoAA; // Validates data from upstream [local, north, east, south, west]
-   
-   assign test_data_AAtoSW=l_data_AAtoSW;
-   
-   assign test_output_req_AAtoSC=l_output_req_AAtoSC;
    
    // Output to downstream routers that the switch data is valid.  l_output_grant_SCtoSW[output number] is a onehot vector, thus
    // if any of the bits are high the output referenced by [output number] has valid data.

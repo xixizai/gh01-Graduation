@@ -12,11 +12,11 @@ module fifo_packet
 
   input packet_t i_data, // 输入，需存入FIFO的packet_t结构的数据
   input logic i_data_val, // 指出i_data端口是否有数据输入，当i_data_val=1时，表示有数据输入
-  input logic i_en, // 输入，数据输出端口（o_data） 的使能信号，控制数据的输出，当一个时钟上升沿来临时，若使能信号为高，则允许数据输出
+  input logic i_en, // 输入，SC->FIFO, 数据输出端口（o_data） 的使能信号，控制数据的输出，当一个时钟上升沿来临时，若使能信号为高，则允许数据输出
 
   output packet_t o_data, // 输出，需从FIFO发送的packet_t结构的数据
   output logic o_data_val, // 指出是否有数据要从o_data端口输出，当o_data_val=1时，表示有数据输出 Validates the data on o_data, held high until input enable received
-  output logic o_en // 输出，数据输入端口（i_data） 的使能信号，表示缓存队列是否有空闲，若使能信号为高，则表示输入的数据可以被写入内存 Outputs an enable, if high, i_data is written to memory
+  output logic [3:0] o_en // 输出，FIFO->PE NODE, 数据输入端口（i_data） 的使能信号，表示缓存队列是否有空闲，若使能信号为高，则表示输入的数据可以被写入内存 Outputs an enable, if high, i_data is written to memory
 );
   
    typedef struct{logic rd_ptr, wr_ptr;} ptr;//读、写指针结构体
@@ -40,20 +40,20 @@ module fifo_packet
             l_mem_ptr[i].wr_ptr <= 0;
          end
          o_data <= 0;
-         
+         o_en <= 4'b1000;
          l_full <= 0;//非满
          l_empty <= 1;//是空
       end else begin
          if(ce) begin
             // 写内存 -------------------------------------------------------------------------------------------------------------
             if(i_data_val && ~l_full) begin//有数据输入 && 非 满
-               // 将输入数据写到写指针指向的内存位置
+              
                for(int i=0; i<DEPTH; i++) begin
-                  l_mem[i] <= l_mem_ptr[i].wr_ptr ? i_data : l_mem[i];
+                  l_mem[i] <= l_mem_ptr[i].wr_ptr ? i_data : l_mem[i]; // 将输入数据写到写指针指向的内存位置
                end
-               // 将 写指针高位 移到下一位 
+              
                for(int i=0; i<DEPTH-1; i++) begin
-                  l_mem_ptr[i+1].wr_ptr <= l_mem_ptr[i].wr_ptr;
+                  l_mem_ptr[i+1].wr_ptr <= l_mem_ptr[i].wr_ptr; // 将 写指针高位 移到下一位 
                end
                l_mem_ptr[0].wr_ptr <= l_mem_ptr[DEPTH-1].wr_ptr;
             end
@@ -114,6 +114,33 @@ module fifo_packet
             end else if (l_full) begin//若 满
                l_full <= (i_en) ? 1'b0 : 1'b1;//若允许输出（要加上且无数据输入吧？），clk后非满，否则，此clk后还是满
             end
+				
+				if (~l_full) begin//若 非满
+               if(i_data_val && ~i_en) begin//有数据输入 && 不允许输出
+                  for(int i=0; i<DEPTH; i++) begin
+                     if(l_mem_ptr[i].wr_ptr) begin//若可写位置下一位就是可读，说明此clk后memory将满
+                           //l_full <= (i<DEPTH-1) ? l_mem_ptr[i+1].rd_ptr : l_mem_ptr[0].rd_ptr;
+								   /*
+                           if(i<DEPTH-1)
+									   o_en <= l_mem_ptr[i+1].rd_ptr ? 4'b0001 : 4'b0000;
+									else
+										o_en <= l_mem_ptr[0].rd_ptr ? 4'b0001 : 4'b0000;
+									*/
+								   if(l_mem_ptr[(i+8)%8].rd_ptr) o_en <= 4'b1000;//8; 
+								   else if(l_mem_ptr[(i+7)%8].rd_ptr) o_en <= 4'b0111;//7; 
+									else if(l_mem_ptr[(i+6)%8].rd_ptr) o_en <= 4'b0110;//6; 
+									else if(l_mem_ptr[(i+5)%8].rd_ptr) o_en <= 4'b0101;//5; 
+									else if(l_mem_ptr[(i+4)%8].rd_ptr) o_en <= 4'b0100;//4; 
+									else if(l_mem_ptr[(i+3)%8].rd_ptr) o_en <= 4'b0011;//3; 
+									else if(l_mem_ptr[(i+2)%8].rd_ptr) o_en <= 4'b0010;//2; 
+									else if(l_mem_ptr[(i+1)%8].rd_ptr) o_en <= 4'b0001;//1; 
+									else o_en <= 4'b0000;//0; 
+                     end
+                  end
+               end
+            end else if (l_full) begin//若 满
+               o_en <= (i_en) ? 4'b0001 : 4'b0000; //l_full <= (i_en) ? 1'b0 : 1'b1;//若允许输出（要加上且无数据输入吧？），clk后非满，否则，此clk后还是满
+            end
             
             // Empty Flag and Output Valid.
             // ------------------------------------------------------------------------------------------------------------
@@ -158,6 +185,6 @@ module fifo_packet
    
    // Valid/Enable.  Note, valid is simply the inverse of empty.  Also, enable is simply the inverse of full.
    assign o_data_val = ~l_empty;
-   assign o_en = ~l_full;
+   //assign o_en = ~l_full;
 
 endmodule

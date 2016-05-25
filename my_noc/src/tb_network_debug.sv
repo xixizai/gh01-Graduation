@@ -27,23 +27,6 @@ module tb_network_debug
    longint  f_time_begin;  // 记录开始时间（最初的复位时间）
    logic    [7:0] packet_count;  // 对仿真生成的包进行计数，可用来标记每个包的id
 	
-   // 链接network模块端口的变量定义 -------------------------------------------------
-   //packet_t [0:`NODES-1] l_data_FFtoN;     // 输入，包，fifo -> network 中的对应路由
-   //logic    [0:`NODES-1] l_data_val_FFtoN; // 输入，包信号，fifo -> network 中的对应路由
-   //logic    [0:`NODES-1] l_en_NtoFF;       // 输出，对应路由的使能信号，network -> fifo
-   
-   packet_t [0:`NODES-1] o_data_N;     // 输出，包，network -> testbench 仿真PE结点
-   logic    [0:`NODES-1] o_data_val_N; // 输出，包信号，network -> testbench 仿真PE结点
-   
-   // 链接fifo模块（属于仿真的PE结点）端口的变量定义 ---------------------------------
-   packet_t [0:`NODES-1] i_data_FF;     // 输入，仿真包，testbench 仿真PE结点-> fifo
-   logic    [0:`NODES-1] i_data_val_FF; // 输入，仿真包信号，testbench 仿真PE结点-> fifo
-   logic    [0:`NODES-1] l_en_NtoFF;    // 输入，对应路由的使能信号，network -> fifo
-   
-   packet_t [0:`NODES-1] l_data_FFtoN;    // 输出，包，fifo -> network 中的对应路由
-   logic    [0:`NODES-1] l_data_val_FFtoN;// 输出，包信号，fifo -> network 中的对应路由
-   logic    [0:`NODES-1] o_en_FF;         // 输出，fifo模块的使能信号，fifo->testbench 仿真PE结点
-   
    // 值为随机生成的变量 --------------------------------------
 	int rand_i;
    logic [0:`NODES-1] rand_data_val; // 根据包注入率随机生成0或1，如果等于1则赋予数据包有效
@@ -131,7 +114,7 @@ module tb_network_debug
 	
    // ================================================ 从子模块里引出的变量 ===========================================================
 	
-   logic    [0:`NODES-1][0:`N-1] test_en_SCtoFF;
+   logic    [0:`NODES-1][0:`N-1][3:0] test_en_SCtoFF;
    // FFtoAA ---------------------------------------------------------------------
    packet_t [0:`NODES-1][0:`N-1] test_data_FFtoAA;
    logic    [0:`NODES-1][0:`N-1] test_data_val_FFtoAA;
@@ -149,10 +132,29 @@ module tb_network_debug
    logic    [0:`NODES-1][0:`N-1][0:`M-1] test_tb_o_output_req;
    // ant_routing_table.sv --------------------------------------------------------
    logic    [0:`NODES-1][0:`NODES-1][0:`N-2][`PH_TABLE_DEPTH-1:0] test_pheromones;
-   logic    [0:`NODES-1][0:`PH_TABLE_DEPTH-1] test_max_pheromone_value;
-   logic    [0:`NODES-1][0:`PH_TABLE_DEPTH-1] test_min_pheromone_value;
+   logic    [0:`NODES-1][0:`N-1][0:`PH_TABLE_DEPTH-1] test_max_pheromone_value;
+   logic    [0:`NODES-1][0:`N-1][0:`PH_TABLE_DEPTH-1] test_min_pheromone_value;
+   logic [0:`NODES-1][0:`N-1][$clog2(`N)-1:0] test_max_pheromone_column;
+   logic [0:`NODES-1][0:`N-1][$clog2(`N)-1:0] test_min_pheromone_column;
    logic [0:`NODES-1][0:`N-1][0:`M-1][1:0] test_avail_directions;
 	
+   // 链接network模块端口的变量定义 -------------------------------------------------
+   //packet_t [0:`NODES-1] l_data_FFtoN;     // 输入，包，fifo -> network 中的对应路由
+   //logic    [0:`NODES-1] l_data_val_FFtoN; // 输入，包信号，fifo -> network 中的对应路由
+   
+   packet_t [0:`NODES-1] o_data_N;     // 输出，包，network -> testbench 仿真PE结点
+   logic    [0:`NODES-1] o_data_val_N; // 输出，包信号，network -> testbench 仿真PE结点
+   logic    [0:`NODES-1][3:0] o_en_N;       // 输出，对应路由的使能信号，network -> fifo
+   
+   // 链接fifo模块（属于仿真的PE结点）端口的变量定义 ---------------------------------
+   packet_t [0:`NODES-1] i_data_FF;     // 输入，仿真包，testbench 仿真PE结点-> fifo
+   logic    [0:`NODES-1] i_data_val_FF; // 输入，仿真包信号，testbench 仿真PE结点-> fifo
+   logic    [0:`NODES-1] i_en_FF;    // 输入，对应路由的使能信号，network -> fifo
+   
+   packet_t [0:`NODES-1] l_data_FFtoN;    // 输出，包，fifo -> network 中的对应路由
+   logic    [0:`NODES-1] l_data_val_FFtoN;// 输出，包信号，fifo -> network 中的对应路由
+   logic    [0:`NODES-1][3:0] o_en_FF;         // 输出，fifo模块的使能信号，fifo->testbench 仿真PE结点
+   
    // ================================================== 生成 network 模块 ===========================================================
   
    network network(
@@ -162,7 +164,7 @@ module tb_network_debug
                                                 // 带fifo模块
 						.i_data(l_data_FFtoN), 
 						.i_data_val(l_data_val_FFtoN),
-						.o_en(l_en_NtoFF),
+						.o_en(o_en_N),
 						.o_data(o_data_N),
 						.o_data_val(o_data_val_N),
 
@@ -195,6 +197,8 @@ module tb_network_debug
 						.test_pheromones(test_pheromones),
 						.test_max_pheromone_value(test_max_pheromone_value),
 						.test_min_pheromone_value(test_min_pheromone_value),
+  .test_max_pheromone_column(test_max_pheromone_column),
+  .test_min_pheromone_column(test_min_pheromone_column),
                   .test_avail_directions(test_avail_directions)
    );
    
@@ -209,7 +213,7 @@ module tb_network_debug
                              .reset_n(reset_n),
                              .i_data(i_data_FF[i]),      
                              .i_data_val(i_data_val_FF[i]),    //f_data_val[i]
-                             .i_en(l_en_NtoFF[i]),
+                             .i_en(i_en_FF[i]),
                              .o_data(l_data_FFtoN[i]),         //l_data_FFtoN
                              .o_data_val(l_data_val_FFtoN[i]), //f_o_data_val
                              .o_en(o_en_FF[i])
@@ -217,6 +221,11 @@ module tb_network_debug
       end
    endgenerate
   
+	always_comb begin
+	   for(int i=0; i<`NODES; i++)begin
+		   i_en_FF[i] = ( |o_en_N[i]);
+		end
+	end
    // =================================================== 仿真数据生成 ==============================================================
    
    // 中间变量的生成（随机地） ------------------------------------------------------
@@ -299,7 +308,7 @@ module tb_network_debug
                packet_count <= packet_count + 1;
 					
                if(f_time % 20 == 0)begin
-                  i_data_FF[rand_i].ant <= 0;
+                  i_data_FF[rand_i].ant <= 1;
                end else begin
                   i_data_FF[rand_i].ant <= 1;
                end
@@ -455,7 +464,8 @@ module tb_network_debug
          end
       end else begin
          for(int i=0; i<`NODES; i++) begin
-            if(l_data_val_FFtoN[i] && (f_total_i_data_count_all >= WARMUP_PACKETS) 
+            if(l_data_val_FFtoN[i] && i_en_FF[i]
+				                       && (f_total_i_data_count_all >= WARMUP_PACKETS) 
                                    && (f_total_i_data_count_all < (WARMUP_PACKETS + MEASURE_PACKETS)))begin
                f_measure_port_i_packet_count_all[i] <= f_measure_port_i_packet_count_all[i] + 1;
                   
@@ -710,7 +720,7 @@ module tb_network_debug
          //显示每一个包的信息，包括路径
          for(int i=0; i<`NODES; i++) begin
             if(debug)begin
-               if(l_data_val_FFtoN[i]) begin // 注入网络时包的信息
+               if(l_data_val_FFtoN[i] && i_en_FF[i]) begin // 注入网络时包的信息
                   $display("f_time: %g;  packet_id:%g;  type:%g;  input node: %g;", f_time, l_data_FFtoN[i].id, l_data_FFtoN[i].ant, i);
                   $display(" source: %d,%d ; destinaton: %d,%d ; ", l_data_FFtoN[i].x_source, l_data_FFtoN[i].y_source, l_data_FFtoN[i].x_dest, l_data_FFtoN[i].y_dest);
                end

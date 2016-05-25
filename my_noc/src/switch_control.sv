@@ -9,7 +9,7 @@ module switch_control
    input logic ce,
    input logic reset_n,
    
-   input logic [0:`M-1] i_en,            // 输入，对应的下游路由结点的使能信号（有空闲）
+   input logic [0:`M-1][3:0] i_en,            // 输入，对应的下游路由结点的使能信号（有空闲）
    input logic [0:`N-1][0:`M-1] i_output_req, // 输入，N个本地的输入单元对M个输出端口的请求情况
    
    output logic [0:`M-1][0:`N-1] o_output_grant, // 输出，M个输出端口分别对N个输入端口的请求作出的应答， -> switch模块
@@ -32,7 +32,7 @@ module switch_control
       l_req_matrix = '0;
       for (int i=0; i<`M; i++) begin
          for (int j=0; j<`N; j++) begin
-            l_req_matrix[i][j] = i_output_req[j][i] && i_en[i];
+            l_req_matrix[i][j] = i_output_req[j][i] && ( |i_en[i]);
          end
       end
    end
