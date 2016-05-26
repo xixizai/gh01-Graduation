@@ -269,7 +269,7 @@ module tb_network
 			end else begin // hotspot
 			// 随机hotspot生成 在下面initial部分
 				for(int i=0; i<`NODES; i++) begin
-					if(i==rand_hotspots[0] || i==rand_hotspots[1] || i==rand_hotspots[2] || rand_hotspots[3])begin
+					if(i==rand_hotspots[0] || i==rand_hotspots[1] || i==rand_hotspots[2] || i==rand_hotspots[3])begin
 						// n个热点必须一一写出。。没想出其它办法。。
 						rand_data_val[i] <= ($urandom_range(100,1) <= HOTSPOT_PACKET_RATE) ? 1'b1 : 1'b0;
 					end else begin
