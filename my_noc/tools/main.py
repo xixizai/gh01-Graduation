@@ -39,7 +39,7 @@ if __name__ == '__main__':
             experiments.append(Experiment(
                 packet_injection_rate=packet_injection_rate,
                 aco_packet_injection_rate=packet_injection_rate,
-                result_dir='results/j_{}/t_{}/r_{}/s_{}/'.format(packet_injection_rate, traffic, 'odd_even', 'random'),
+                result_dir='../results/j_{}/t_{}/r_{}/s_{}/'.format(packet_injection_rate, traffic, 'odd_even', 'random'),
                 traffic=traffic,
                 routing='odd_even',
                 selection='random',
@@ -48,7 +48,7 @@ if __name__ == '__main__':
             experiments.append(Experiment(
                 packet_injection_rate=packet_injection_rate,
                 aco_packet_injection_rate=packet_injection_rate,
-                result_dir='results/j_{}/t_{}/r_{}/s_{}/'.format(packet_injection_rate, traffic, 'odd_even', 'buffer_level'),
+                result_dir='../results/j_{}/t_{}/r_{}/s_{}/'.format(packet_injection_rate, traffic, 'odd_even', 'buffer_level'),
                 traffic=traffic,
                 routing='odd_even',
                 selection='buffer_level',
@@ -57,7 +57,7 @@ if __name__ == '__main__':
             experiments.append(Experiment(
                 packet_injection_rate=packet_injection_rate,
                 aco_packet_injection_rate=packet_injection_rate,
-                result_dir='results/j_{}/t_{}/r_{}/s_{}/'.format(packet_injection_rate, traffic, 'odd_even', 'aco'),
+                result_dir='../results/j_{}/t_{}/r_{}/s_{}/'.format(packet_injection_rate, traffic, 'odd_even', 'aco'),
                 traffic=traffic,
                 routing='odd_even',
                 selection='aco',
@@ -66,13 +66,12 @@ if __name__ == '__main__':
         for experiment in experiments:
             experiment.load_stats()
             
-        to_csv('results/t_{}.csv'.format(traffic), experiments, [
+        to_csv('../results/t_{}.csv'.format(traffic), experiments, [
             ('Traffic', lambda e: e.traffic),
-            ('Packet Injection Rate (packets/cycle/node)', lambda e: e.packet_injection_rate),
+            ('Packet Injection Rate (packets/cycle/node)', lambda e: float(e.packet_injection_rate) / 100),
             ('Routing Algorithm', lambda e: e.routing),
             ('Selection Policy', lambda e: e.selection),
             ('Routing+Selection', lambda e: '{}+{}'.format(e.routing, e.selection)),
-            ('Simulation Time', lambda e: e.stats['simulation_time']),
             ('Total Cycles', lambda e: e.stats['total_cycles']),
             ('# Packets Transmitted', lambda e: e.stats['packet.num_packets_transmitted']),
             ('Throughput (packets/cycle/node)', lambda e: e.stats['packet.throughput']),
@@ -84,18 +83,18 @@ if __name__ == '__main__':
                 'acopacket.average_packet_delay'] if 'acopacket.average_packet_delay' in e.stats else ''),
         ])
 
-        generate_plot(
-            'results/t_{}.csv'.format(traffic),
-            'results/t_{}_throughput.pdf'.format(traffic),
-            'Packet Injection Rate (packets/cycle/node)',
-            'Routing+Selection',
-            'Throughput (packets/cycle/node)'
-        )
-
-        generate_plot(
-            'results/t_{}.csv'.format(traffic),
-            'results/t_{}_average_packet_delay.pdf'.format(traffic),
-            'Packet Injection Rate (packets/cycle/node)',
-            'Routing+Selection',
-            'Average Packet Delay (cycles)'
-        )
+        # generate_plot(
+        #     '../results/t_{}.csv'.format(traffic),
+        #     '../results/t_{}_throughput.pdf'.format(traffic),
+        #     'Packet Injection Rate (packets/cycle/node)',
+        #     'Routing+Selection',
+        #     'Throughput (packets/cycle/node)'
+        # )
+        #
+        # generate_plot(
+        #     '../results/t_{}.csv'.format(traffic),
+        #     '../results/t_{}_average_packet_delay.pdf'.format(traffic),
+        #     'Packet Injection Rate (packets/cycle/node)',
+        #     'Routing+Selection',
+        #     'Average Packet Delay (cycles)'
+        # )
