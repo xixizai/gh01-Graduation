@@ -8,3 +8,15 @@ sudo add-apt-repository ppa:fkrull/deadsnakes
 sudo apt-get update
 sudo apt-get install python3.5
 ```
+
+## Install PIP for Python 3
+
+```
+sudo apt-get install python3-pip
+```
+
+## Install Python 3 Packages
+
+```
+pip3 install objectpath pyparsing pytz matplotlib pandas seaborn`
+```
