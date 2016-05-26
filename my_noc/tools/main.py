@@ -83,18 +83,18 @@ if __name__ == '__main__':
                 'acopacket.average_packet_delay'] if 'acopacket.average_packet_delay' in e.stats else ''),
         ])
 
-        # generate_plot(
-        #     '../results/t_{}.csv'.format(traffic),
-        #     '../results/t_{}_throughput.pdf'.format(traffic),
-        #     'Packet Injection Rate (packets/cycle/node)',
-        #     'Routing+Selection',
-        #     'Throughput (packets/cycle/node)'
-        # )
-        #
-        # generate_plot(
-        #     '../results/t_{}.csv'.format(traffic),
-        #     '../results/t_{}_average_packet_delay.pdf'.format(traffic),
-        #     'Packet Injection Rate (packets/cycle/node)',
-        #     'Routing+Selection',
-        #     'Average Packet Delay (cycles)'
-        # )
+        generate_plot(
+            '../results/t_{}.csv'.format(traffic),
+            '../results/t_{}_throughput.pdf'.format(traffic),
+            'Packet Injection Rate (packets/cycle/node)',
+            'Routing+Selection',
+            'Throughput (packets/cycle/node)'
+        )
+
+        generate_plot(
+            '../results/t_{}.csv'.format(traffic),
+            '../results/t_{}_average_packet_delay.pdf'.format(traffic),
+            'Packet Injection Rate (packets/cycle/node)',
+            'Routing+Selection',
+            'Average Packet Delay (cycles)'
+        )
