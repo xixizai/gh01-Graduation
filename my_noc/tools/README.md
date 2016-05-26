@@ -18,5 +18,5 @@ sudo apt-get install python3-pip python3-matplotlib python3-pandas python3-seabo
 ## Install Python 3 Packages
 
 ```
-pip3 install objectpath pyparsing pytz`
+pip3 install objectpath pyparsing pytz
 ```
