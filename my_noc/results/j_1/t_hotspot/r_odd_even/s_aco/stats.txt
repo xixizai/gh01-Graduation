@@ -1,0 +1,22 @@
+
+ # Total cycles: 11891
+ # Total packets transmitted: 14003, # Total packets received: 14003
+ 
+ -- All packets:
+Packets transmitted: 10001, # Packets received: 9998
+Throughput: 0.624875 packets/cycle/node
+Average packet latency: 44.3464 cycles
+Max packet latency: 10105 cycles
+
+ -- Normal packet:
+Packets transmitted: 8627, # Packets received: 9017
+Throughput: 0.563562 packets/cycle/node
+Average packet latency: 38.6254 cycles
+Max packet latency: 9631 cycles
+
+ -- Ant packet:
+Packets transmitted: 1374, # Packets received: 981
+Throughput: 0.0613125 packets/cycle/node
+Average packet latency: 96.9134 cycles
+Max packet latency: 10105 cycles
+
