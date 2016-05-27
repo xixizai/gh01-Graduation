@@ -8,7 +8,7 @@
    "measure_cycles":4574,
    "router_input_queue_depth":8,
    "PEnode_input_queue_depth":40,
-   "create_ant_packet_period":100,
+   "create_ant_packet_period":1,
    "pheromone_table_value_width":4,
    "result_dir":"results/j_10/t_hotspot/r_odd_even/s_aco/",
    "routing":"odd_even",
