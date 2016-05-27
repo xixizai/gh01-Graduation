@@ -76,6 +76,11 @@ if __name__ == '__main__':
             ('# Packets Transmitted', lambda e: e.stats['packet.num_packets_transmitted']),
             ('Throughput (packets/cycle/node)', lambda e: e.stats['packet.throughput']),
             ('Average Packet Delay (cycles)', lambda e: e.stats['packet.average_packet_delay']),
+            ('Normal.# Packets Transmitted', lambda e: e.stats[
+                'packet.num_packets_transmitted'] if 'packet.num_packets_transmitted' in e.stats else ''),
+            ('Normal.Throughput (packets/cycle/node)', lambda e: e.stats['packet.throughput'] if 'packet.throughput' in e.stats else ''),
+            ('Normal.Average Packet Delay (cycles)', lambda e: e.stats[
+                'packet.average_packet_delay'] if 'packet.average_packet_delay' in e.stats else ''),
             ('ACO.# Packets Transmitted', lambda e: e.stats[
                 'acopacket.num_packets_transmitted'] if 'acopacket.num_packets_transmitted' in e.stats else ''),
             ('ACO.Throughput (packets/cycle/node)', lambda e: e.stats['acopacket.throughput'] if 'acopacket.throughput' in e.stats else ''),
@@ -93,8 +98,40 @@ if __name__ == '__main__':
 
         generate_plot(
             '../results/t_{}.csv'.format(traffic),
+            '../results/t_{}_normal_throughput.pdf'.format(traffic),
+            'Packet Injection Rate (packets/cycle/node)',
+            'Routing+Selection',
+            'Normal.Throughput (packets/cycle/node)'
+        )
+
+        generate_plot(
+            '../results/t_{}.csv'.format(traffic),
+            '../results/t_{}_aco_throughput.pdf'.format(traffic),
+            'Packet Injection Rate (packets/cycle/node)',
+            'Routing+Selection',
+            'ACO.Throughput (packets/cycle/node)'
+        )
+
+        generate_plot(
+            '../results/t_{}.csv'.format(traffic),
             '../results/t_{}_average_packet_delay.pdf'.format(traffic),
             'Packet Injection Rate (packets/cycle/node)',
             'Routing+Selection',
             'Average Packet Delay (cycles)'
+        )
+
+        generate_plot(
+            '../results/t_{}.csv'.format(traffic),
+            '../results/t_{}_normal_average_packet_delay.pdf'.format(traffic),
+            'Packet Injection Rate (packets/cycle/node)',
+            'Routing+Selection',
+            'Normal.Average Packet Delay (cycles)'
+        )
+
+        generate_plot(
+            '../results/t_{}.csv'.format(traffic),
+            '../results/t_{}_aco_average_packet_delay.pdf'.format(traffic),
+            'Packet Injection Rate (packets/cycle/node)',
+            'Routing+Selection',
+            'ACO.Average Packet Delay (cycles)'
         )
