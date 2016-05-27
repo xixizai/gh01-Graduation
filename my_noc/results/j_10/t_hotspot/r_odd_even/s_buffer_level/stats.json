@@ -1,20 +1,20 @@
 {
-   "max_cycles":10000,
+   "max_cycles":20000,
    "total_cycles":6406,
    "measure_cycles":4574,
-   "throughput":0.136628,
+   "throughput":0.136656,
    "num_packets_transmitted":10000,
-   "num_packets_received":9999,
-   "average_packet_delay":33.6236,
+   "num_packets_received":10001,
+   "average_packet_delay":33.7811,
    "max_packet_delay":5659,
-   "packet.throughput":0.136628,
+   "packet.throughput":0.136656,
    "packet.num_packets_transmitted":10000,
-   "packet.num_packets_received":9999,
-   "packet.average_packet_delay":33.6236,
+   "packet.num_packets_received":10001,
+   "packet.average_packet_delay":33.7811,
    "packet.max_packet_delay":5659,
    "acopacket.throughput":0,
    "acopacket.num_packets_transmitted":0,
    "acopacket.num_packets_received":0,
    "acopacket.average_packet_delay":1e+07,
-   "acopacket.max_packet_delay":585
+   "acopacket.max_packet_delay":659
 }
