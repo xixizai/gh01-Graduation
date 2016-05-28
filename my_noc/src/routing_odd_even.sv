@@ -5,7 +5,7 @@ module routing_odd_even#(
   parameter integer X_LOC, // 当前结点的X坐标
   parameter integer Y_LOC, // 当前结点的Y坐标
   
-  parameter integer routing_type = 2 //0:nothing   1:xy   2:odd even
+  parameter integer routing_type = 1 //0:nothing   1:xy   2:odd even
 )(
   input logic [0:`N-1] i_routing_calculate,             // 输入，路由计算使能信号
   input logic [0:`N-1][$clog2(`X_NODES)-1:0] i_x_source,// 输入，数据包源的信息（x坐标）

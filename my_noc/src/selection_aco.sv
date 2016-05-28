@@ -5,7 +5,7 @@ module selection_aco#(
   parameter integer X_LOC, // 当前结点的X坐标
   parameter integer Y_LOC, // 当前结点的Y坐标
   
-  parameter integer selection_type = 3 //0:选择第一个   1:random   2:obl   3:aco
+  parameter integer selection_type = 1 //0:选择第一个   1:random   2:obl   3:aco
 )(
   input logic reset_n,
   input logic [0:`M-1][3:0] i_en,
@@ -135,24 +135,24 @@ module selection_aco#(
 								end
 							end
 						end
-						for(int j = 0; j < `N; j++) begin
-							o_output_req[i][j] = (j == max_pheromone_column[i] + 1) ? 1 : 0; // ACO选择
-						end
+//						for(int j = 0; j < `N; j++) begin
+//							o_output_req[i][j] = (j == max_pheromone_column[i] + 1) ? 1 : 0; // ACO选择
+//						end
 						//max_pheromone_column = 0;
-//						if((max_pheromone_value - min_pheromone_value) > 10) begin 
-//							// ACO选择
-//							// may make error choice(choose output with less pheromone)
-//							// prevent deadlock
-//							/* rule */
-//							for(int j = 0; j < `N; j++) begin
-//								o_output_req[i][j] = (j == (max_pheromone_column + 1)) ? 1 : 0; // ACO选择
-//							end
-//						end else begin //(is not ant packet and table.d is not avail) begin:calculate by random route
-//							// 随机选择
-//							for(int j = 0; j < `N; j++) begin
-//								o_output_req[i][j] = (j == (i_avail_directions[i][rand_num[i]] + 1) ) ? 1 : 0; // 随机选择
-//							end
-//						end			
+						if((max_pheromone_value - min_pheromone_value) > 10) begin 
+							// ACO选择
+							// may make error choice(choose output with less pheromone)
+							// prevent deadlock
+							/* rule */
+							for(int j = 0; j < `N; j++) begin
+								o_output_req[i][j] = (j == (max_pheromone_column[i] + 1)) ? 1 : 0; // ACO选择
+							end
+						end else begin //(is not ant packet and table.d is not avail) begin:calculate by random route
+							// 随机选择
+							for(int j = 0; j < `N; j++) begin
+								o_output_req[i][j] = (j == (i_avail_directions[i][rand_num[i]] + 1) ) ? 1 : 0; // 随机选择
+							end
+						end			
 					end
 
             end else if(i_update[i]) begin
