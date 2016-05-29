@@ -36,6 +36,8 @@ module ant_agent
    logic [0:`N-1][$clog2(`X_NODES)-1:0] l_x_source; // local -> selection
    logic [0:`N-1][$clog2(`X_NODES)-1:0] l_x_temp;   // local -> selection
    logic [0:`N-1][$clog2(`Y_NODES)-1:0] l_y_temp;   // local -> selection
+   logic [0:`N-1][4:0] l_pheromone_value;
+   logic [0:`N-1][$clog2(`NODES)-1:0] l_num_memories;
    logic [0:`N-1]l_routing_calculate; // selection -> routing
 
    assign test_routing_calculate = l_routing_calculate;
@@ -75,6 +77,8 @@ module ant_agent
                     
                     .i_x_dest(l_x_temp),
                     .i_y_dest(l_y_temp),
+                    .i_pheromone_value(l_pheromone_value),
+                    .i_num_memories(l_num_memories),
                     
                     .i_update(l_update),// whether update or not
                     .i_select_neighbor(l_select_neighbor), //whether select neighbor or not
@@ -95,6 +99,8 @@ module ant_agent
          l_x_source[i] = '0;
          l_x_temp[i] = '0;
          l_y_temp[i] = '0;
+         l_pheromone_value[i] = '0;
+         l_num_memories[i] = '0;
 
          l_routing_calculate[i] = '0;
 	 
@@ -112,6 +118,8 @@ module ant_agent
             l_x_source[i] = o_data[i].x_source;
             l_x_temp[i] = o_data[i].x_dest;
             l_y_temp[i] = o_data[i].y_dest;
+            l_pheromone_value[i] = o_data[i].pheromone_value;
+            l_num_memories[i] = o_data[i].num_memories;
 		    
             if(~o_data[i].ant) begin
             // 是 normal packet =================================================================================================

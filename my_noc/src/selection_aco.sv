@@ -5,7 +5,7 @@ module selection_aco#(
   parameter integer X_LOC, // 当前结点的X坐标
   parameter integer Y_LOC, // 当前结点的Y坐标
   
-  parameter integer selection_type = 1 //0:选择第一个   1:random   2:obl   3:aco
+  parameter integer selection_type = 3 //0:选择第一个   1:random   2:obl   3:aco
 )(
   input logic reset_n,
   input logic [0:`M-1][3:0] i_en,
@@ -15,6 +15,8 @@ module selection_aco#(
   input logic [0:`N-1][0:`M-1][1:0] i_avail_directions,// 输入，可选择的输出端口队列
   input logic [0:`N-1][$clog2(`X_NODES)-1:0] i_x_dest, // 输入，数据包的目的地信息（x坐标）
   input logic [0:`N-1][$clog2(`Y_NODES)-1:0] i_y_dest, // 输入，数据包的目的地信息（y坐标）
+  input logic [0:`N-1][4:0] i_pheromone_value,
+  input logic [0:`N-1][$clog2(`NODES)-1:0] i_num_memories,
 
   output logic [0:`N-1][0:`M-1] o_output_req, // 输出，通过选择策略 得到的对应N个输入数据请求的输出端口
   
@@ -26,6 +28,8 @@ module selection_aco#(
 );
 
    // ==================================================== Local Signals ========================================================
+   logic [0:`N-1][4:0] l_ph;
+	
    // 对可选队列 使用随机选择时 相关的变量
    logic [0:`N-1][`M-1:0] rand_seed; // 用来生成随机数的随机种子
    logic [0:`N-1][1:0] rand_num; // 保存随机数
@@ -150,17 +154,22 @@ module selection_aco#(
 						end else begin //(is not ant packet and table.d is not avail) begin:calculate by random route
 							// 随机选择
 							for(int j = 0; j < `N; j++) begin
-								o_output_req[i][j] = (j == (i_avail_directions[i][rand_num[i]] + 1) ) ? 1 : 0; // 随机选择
+								o_output_req[i][j] = (j == (i_avail_directions[i][rand_num[i]] + 1) ) ? 1 : 0; // 随机选择(这个随机不知道靠不靠谱)
 							end
 						end			
 					end
 
-            end else if(i_update[i]) begin
+            end else if(i_update[i]) begin // 蚁群优化：信息素的计算：每个蚂蚁都带最短路径（min_l）的n倍的信息素（total_ph）。在前进路途中（在fifo的memory里），自身携带的信息素每个周期减少1；当forward到达目的地时，若自身信息素量已小于最短路径长度，则抛弃；若不小于信息素量，则backward，在每个结点加上（total_ph/min_l）或者（total_ph/实际路径长度）或者（total_ph - 实际路径长度）
+				   if(3*i_num_memories[i] < i_pheromone_value[i])l_ph[i]=4;
+					else if (2*i_num_memories[i] < i_pheromone_value[i] && i_pheromone_value[i] <= 3*i_num_memories[i])l_ph[i]=3;
+					else if (1*i_num_memories[i] < i_pheromone_value[i] && i_pheromone_value[i] <= 2*i_num_memories[i])l_ph[i]=2;
+					else if (0 < i_pheromone_value[i] && i_pheromone_value[i] <= 1*i_num_memories[i])l_ph[i]=1;
+					else l_ph[i]=0;
                for(int j = 0; j < `N-1; j++) begin
                   if(j + 1 == i) begin // parent结点i 对应的信息素表的位置 + 1
-                    pheromones[l_dest[i]][j] = (pheromones[l_dest[i]][j] < `PH_MAX_VALUE) ? pheromones[l_dest[i]][j]+1:pheromones[l_dest[i]][j];
+                   pheromones[l_dest[i]][j] = (pheromones[l_dest[i]][j] < `PH_MAX_VALUE) ? pheromones[l_dest[i]][j]+l_ph[i]:pheromones[l_dest[i]][j];
                   end else begin // parent结点i 对应的信息素表的位置 - 1
-                    pheromones[l_dest[i]][j] = (pheromones[l_dest[i]][j] > `PH_MIN_VALUE) ? pheromones[l_dest[i]][j]-1:pheromones[l_dest[i]][j];
+                   pheromones[l_dest[i]][j] = (pheromones[l_dest[i]][j] > `PH_MIN_VALUE) ? pheromones[l_dest[i]][j]-l_ph[i]:pheromones[l_dest[i]][j];
                   end
                end
             end

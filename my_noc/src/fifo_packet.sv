@@ -40,11 +40,16 @@ module fifo_packet
             l_mem_ptr[i].wr_ptr <= 0;
          end
          o_data <= 0;
-         o_en <= 4'b1000;
+         o_en <= 4'b0100;
          l_full <= 0;//非满
          l_empty <= 1;//是空
       end else begin
          if(ce) begin
+			   if(DEPTH==`INPUT_QUEUE_DEPTH)begin
+					for(int i=0; i<DEPTH; i++) begin
+						l_mem[i].pheromone_value <= (l_mem[i].ant==1 && l_mem[i].backward==0 && l_mem[i].pheromone_value>0)? l_mem[i].pheromone_value-1 : l_mem[i].pheromone_value; 
+					end
+				end
             // 写内存 -------------------------------------------------------------------------------------------------------------
             if(i_data_val && ~l_full) begin//有数据输入 && 非 满
               
@@ -126,14 +131,15 @@ module fifo_packet
 									else
 										o_en <= l_mem_ptr[0].rd_ptr ? 4'b0001 : 4'b0000;
 									*/
-								   if(l_mem_ptr[(i+8)%8].rd_ptr) o_en <= 4'b1000;//8; 
-								   else if(l_mem_ptr[(i+7)%8].rd_ptr) o_en <= 4'b0111;//7; 
-									else if(l_mem_ptr[(i+6)%8].rd_ptr) o_en <= 4'b0110;//6; 
-									else if(l_mem_ptr[(i+5)%8].rd_ptr) o_en <= 4'b0101;//5; 
-									else if(l_mem_ptr[(i+4)%8].rd_ptr) o_en <= 4'b0100;//4; 
-									else if(l_mem_ptr[(i+3)%8].rd_ptr) o_en <= 4'b0011;//3; 
-									else if(l_mem_ptr[(i+2)%8].rd_ptr) o_en <= 4'b0010;//2; 
-									else if(l_mem_ptr[(i+1)%8].rd_ptr) o_en <= 4'b0001;//1; 
+//								   if(l_mem_ptr[(i+8) % DEPTH].rd_ptr) o_en <= 4'b1000;//8; 
+//								   else if(l_mem_ptr[(i+7) % DEPTH].rd_ptr) o_en <= 4'b0111;//7; 
+//									else if(l_mem_ptr[(i+6) % DEPTH].rd_ptr) o_en <= 4'b0110;//6; 
+//									else if(l_mem_ptr[(i+5) % DEPTH].rd_ptr) o_en <= 4'b0101;//5; 
+//									else 
+									if(l_mem_ptr[(i+4) % DEPTH].rd_ptr) o_en <= 4'b0100;//4; 
+									else if(l_mem_ptr[(i+3) % DEPTH].rd_ptr) o_en <= 4'b0011;//3; 
+									else if(l_mem_ptr[(i+2) % DEPTH].rd_ptr) o_en <= 4'b0010;//2; 
+									else if(l_mem_ptr[(i+1) % DEPTH].rd_ptr) o_en <= 4'b0001;//1; 
 									else o_en <= 4'b0000;//0; 
                      end
                   end
