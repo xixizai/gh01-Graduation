@@ -21,8 +21,7 @@ class Experiment:
 
 if __name__ == '__main__':
     traffics = ['uniform', 'transpose', 'hotspot']
-    # packet_injection_rates = [1, 5, 10, 20, 50, 60]
-    packet_injection_rates = [1, 5, 10, 20, 50]
+    packet_injection_rates = [1, 5, 10, 20, 50, 60]
 
     for traffic in traffics:
         experiments = []
