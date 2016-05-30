@@ -7,6 +7,7 @@ module ant_agent
   parameter integer Y_LOC // 当前结点的Y坐标
 )
 (
+   input logic clk,
    input logic reset_n,
    input logic [0:`M-1][3:0] i_en,
    input packet_t [0:`N-1] i_data, // 数据输入端口
@@ -22,12 +23,16 @@ module ant_agent
    output logic [0:`N-1]test_update,
    output logic [0:`N-1][0:`M-1] test_tb_o_output_req,
    
-   output logic [0:`NODES-1][0:`N-2][`PH_TABLE_DEPTH-1:0] test_pheromones,
    output logic [0:`N-1][`PH_TABLE_DEPTH-1:0] test_max_pheromone_value,
    output logic [0:`N-1][`PH_TABLE_DEPTH-1:0] test_min_pheromone_value,
-  output logic [0:`N-1][$clog2(`N)-1:0] test_max_pheromone_column,
-  output logic [0:`N-1][$clog2(`N)-1:0] test_min_pheromone_column,
-   output logic [0:`N-1][0:`M-1][1:0] test_avail_directions
+   output logic [0:`N-1][$clog2(`N)-1:0] test_max_pheromone_column,
+   output logic [0:`N-1][$clog2(`N)-1:0] test_min_pheromone_column,
+   output logic [0:`N-1][3:0] test_max_en_value,
+   output logic [0:`N-1][3:0] test_min_en_value,
+   output logic [0:`N-1][$clog2(`N)-1:0] test_max_en_column,
+   output logic [0:`N-1][$clog2(`N)-1:0] test_min_en_column,
+   output logic [0:`N-1][0:`M-1][1:0] test_avail_directions,
+   output logic [0:`N-1][4:0] test_l_ph
 );
 
    // ==================================================== Local Signals ========================================================
@@ -72,7 +77,8 @@ module ant_agent
    // =====================================================  selection_aco  ========================================================
    selection_aco #(.X_LOC(X_LOC), .Y_LOC(Y_LOC))
       selection_aco(
-                    .reset_n(reset_n),
+                    .clk(clk),
+						  .reset_n(reset_n),
                     .i_en(i_en),
                     
                     .i_x_dest(l_x_temp),
@@ -86,11 +92,15 @@ module ant_agent
                     
                     .o_output_req(select_o_output_req),
                     
-                    .test_pheromones(test_pheromones),
                     .test_max_pheromone_value(test_max_pheromone_value),
                     .test_min_pheromone_value(test_min_pheromone_value),
   .test_max_pheromone_column(test_max_pheromone_column),
-  .test_min_pheromone_column(test_min_pheromone_column)
+  .test_min_pheromone_column(test_min_pheromone_column),
+   .test_max_en_value(test_max_en_value),
+   .test_min_en_value(test_min_en_value),
+   .test_max_en_column(test_max_en_column),
+   .test_min_en_column(test_min_en_column),
+   .test_l_ph(test_l_ph)
                    );
    // ============================================================================================================================
    always_comb begin

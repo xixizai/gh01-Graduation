@@ -40,12 +40,16 @@ module network
    output logic [0:`NODES-1][0:`N-1] test_select_neighbor,
    output logic [0:`NODES-1][0:`N-1][0:`M-1] test_tb_o_output_req,
    
-   output logic [0:`NODES-1][0:`NODES-1][0:`N-2][`PH_TABLE_DEPTH-1:0] test_pheromones,
    output logic [0:`NODES-1][0:`N-1][`PH_TABLE_DEPTH-1:0] test_max_pheromone_value,
    output logic [0:`NODES-1][0:`N-1][`PH_TABLE_DEPTH-1:0] test_min_pheromone_value,
-  output logic [0:`NODES-1][0:`N-1][$clog2(`N)-1:0] test_max_pheromone_column,
-  output logic [0:`NODES-1][0:`N-1][$clog2(`N)-1:0] test_min_pheromone_column,
-   output logic [0:`NODES-1][0:`N-1][0:`M-1][1:0] test_avail_directions
+   output logic [0:`NODES-1][0:`N-1][$clog2(`N)-1:0] test_max_pheromone_column,
+   output logic [0:`NODES-1][0:`N-1][$clog2(`N)-1:0] test_min_pheromone_column,
+   output logic [0:`NODES-1][0:`N-1][3:0] test_max_en_value,
+   output logic [0:`NODES-1][0:`N-1][3:0] test_min_en_value,
+   output logic [0:`NODES-1][0:`N-1][$clog2(`N)-1:0] test_max_en_column,
+   output logic [0:`NODES-1][0:`N-1][$clog2(`N)-1:0] test_min_en_column,
+   output logic [0:`NODES-1][0:`N-1][0:`M-1][1:0] test_avail_directions,
+   output logic [0:`NODES-1][0:`N-1][4:0] test_l_ph
 );
    
    // Network connections from which routers will read
@@ -123,12 +127,16 @@ module network
                        .test_select_neighbor(test_select_neighbor[y*`X_NODES+x]),
                        .test_tb_o_output_req(test_tb_o_output_req[y*`X_NODES+x]),
                        
-                       .test_pheromones(test_pheromones[y*`X_NODES+x]),
                        .test_max_pheromone_value(test_max_pheromone_value[y*`X_NODES+x]),
                        .test_min_pheromone_value(test_min_pheromone_value[y*`X_NODES+x]),
   .test_max_pheromone_column(test_max_pheromone_column[y*`X_NODES+x]),
   .test_min_pheromone_column(test_min_pheromone_column[y*`X_NODES+x]),
-                       .test_avail_directions(test_avail_directions[y*`X_NODES+x])
+   .test_max_en_value(test_max_en_value[y*`X_NODES+x]),
+   .test_min_en_value(test_min_en_value[y*`X_NODES+x]),
+   .test_max_en_column(test_max_en_column[y*`X_NODES+x]),
+   .test_min_en_column(test_min_en_column[y*`X_NODES+x]),
+                       .test_avail_directions(test_avail_directions[y*`X_NODES+x]),
+   .test_l_ph(test_l_ph[y*`X_NODES+x])
                       );
          end
       end

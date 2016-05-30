@@ -7,12 +7,12 @@
 `define M `N // 输出端口的数目
 
 `define TIME_STAMP_SIZE 32 // 时间戳变量的位宽
-`define PH_TABLE_DEPTH 6 // 信息素表中值的位宽
-`define PH_MIN_VALUE 0 // 信息素表中值的最小值
-`define PH_MAX_VALUE 6'b111111 // 信息素表中的最大值
+`define PH_TABLE_DEPTH 8 // 信息素表中值的位宽
+`define PH_MIN_VALUE 8'b0 // 信息素表中值的最小值
+`define PH_MAX_VALUE 8'b11111111 // 信息素表中的最大值
 
 `define CREATE_ANT_PERIOD 100 // 创建 ant packet 的周期
-`define warmup_packets_num 1000 // 仿真中warmup阶段要发送的数据包数目
+`define warmup_time_num 1000 // 仿真中warmup阶段要发送的数据包数目
 
 //`define routing_type_num = 2'b01
 //`define traffic_type_num = 2'b10
@@ -28,7 +28,7 @@ typedef struct packed {
 	
    logic ant; // 标记包的类型: 1: ant packet; 0: normal packet.
    logic backward; // 标记ant包的类型（仅为ant包时有效）: 1: backward packet; 0: forward packet.
-	logic [4:0] pheromone_value;//[$clog2( (`X_NODES+`Y_NODES-2) *4) +1 : 0]
+	logic [5:0] pheromone_value;//[$clog2( (`X_NODES+`Y_NODES-2) *4) +1 : 0]
 	
    logic [0:`NODES-1][$clog2(`X_NODES)-1:0] x_memory; // 包走过的路径队列（X坐标）
    logic [0:`NODES-1][$clog2(`Y_NODES)-1:0] y_memory; // 包走过的路径队列（Y坐标）

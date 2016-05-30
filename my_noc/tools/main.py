@@ -21,7 +21,7 @@ class Experiment:
 
 if __name__ == '__main__':
     traffics = ['uniform', 'transpose', 'hotspot']
-    packet_injection_rates = [1, 5, 10, 20, 50]
+    packet_injection_rates = [1, 5, 10, 20, 50, 60]
 
     for traffic in traffics:
         experiments = []
@@ -29,7 +29,7 @@ if __name__ == '__main__':
         for packet_injection_rate in packet_injection_rates:
             experiments.append(Experiment(
                 packet_injection_rate=packet_injection_rate,
-                aco_packet_injection_rate=100,
+                aco_packet_injection_rate=packet_injection_rate,
                 result_dir='../results/j_{}/t_{}/r_{}/s_{}/'.format(packet_injection_rate, traffic, 'xy', 'random'),
                 traffic=traffic,
                 routing='xy',

@@ -1,4 +1,5 @@
 // M-bit Programmable Priority Encoder including round robin priority generation.
+// Round-Robin 仲裁机制
 module ppe_roundrobin
 #(
   parameter N // Number of requesters

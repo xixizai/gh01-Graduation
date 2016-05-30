@@ -1,25 +1,25 @@
 `timescale 1ps/1ps
 `include "config.sv"
-// 测试 整个网络（network）总的 Tx 和 Rx, 和在 MEASURE_PACKETS 阶段的 Tx 和 Rx, 吞吐率, 包时延。
+// 测试 整个网络（network）总的 Tx 和 Rx, 和在 MEASURE_TIME 阶段的 Tx 和 Rx, 吞吐率, 包时延。
 // 在各个平均包注入率下测试
 module tb_network
 #(
    parameter CLK_PERIOD = 100ps, // 设置一个时钟周期为 100ps
-   parameter integer WARMUP_PACKETS = `warmup_packets_num, // 使用WARMUP_PACKETS数量的包来 warm-up the network
-   parameter integer MEASURE_PACKETS = `warmup_packets_num*5, // 用来测试的包的数量
-   parameter integer DRAIN_PACKETS = `warmup_packets_num*3, // 使用DRAIN_PACKETS数量的包来 drain the network
-	parameter longint FINISH_TIME = CLK_PERIOD * `warmup_packets_num*50,
+   parameter integer WARMUP_TIME = `warmup_time_num, // 使用WARMUP_TIME数量的包来 warm-up the network
+   parameter integer MEASURE_TIME = `warmup_time_num*10, // 用来测试的包的数量
+   parameter integer DRAIN_TIME = `warmup_time_num*3, // 使用DRAIN_TIME数量的包来 drain the network
+	parameter longint RUNNING_TIME = WARMUP_TIME + MEASURE_TIME + DRAIN_TIME*2,
    
-   parameter integer PACKET_RATE = 1, // 平均包注入率 Offered traffic as percent of capacity
-   parameter integer ANT_PACKET_RATE = 100, // 平均包注入率 Offered traffic as percent of capacity
-   parameter integer HOTSPOT_PACKET_RATE = 10, // hotspot包注入率
+   parameter integer PACKET_RATE = 5, // 平均包注入率 Offered traffic as percent of capacity
+   parameter integer ANT_PACKET_RATE = PACKET_RATE, // 平均包注入率 Offered traffic as percent of capacity
+   parameter integer HOTSPOT_PACKET_RATE = 20, // hotspot包注入率
    
    parameter integer NODE_QUEUE_DEPTH = `INPUT_QUEUE_DEPTH * 5, // 模拟PE结点中 fifo 的深度
-	parameter integer traffic_type = 1, //0:nothing   1:uniform   2:transpose   3:hotspot
+	parameter integer traffic_type = 2, //0:nothing   1:uniform   2:transpose   3:hotspot
    parameter integer routing_type = 2, //0:nothing   1:xy   2:odd even
    parameter integer selection_type = 3 //0:选择第一个   1:random   2:obl   3:aco
 );
- 
+  
    // =================================================== 变量 ==============================================================
 	integer file_id;
   
@@ -83,7 +83,6 @@ module tb_network
       real f_throughput_o_ant;       // 吞吐率，ant包
       real f_throughput_o_forward;   // 吞吐率，forward ant包
       real f_throughput_o_backward;  // 吞吐率，backward ant包
-   real f_throughput_cycle_count;        // 接收到的measure包的数量
 
    // 只记录measure包的时延 --------------------------------------------------------------------------------------------------
    real f_latency_o_packet_count_all;        // 接收到的measure包的数量
@@ -132,17 +131,21 @@ module tb_network
    // selection_aco -------------------------------------------------------------
    logic    [0:`NODES-1][0:`N-1] test_update;
    logic    [0:`NODES-1][0:`N-1] test_select_neighbor;
-   logic    [0:`NODES-1][0:`NODES-1][0:`N-2][`PH_TABLE_DEPTH-1:0] test_pheromones;
    logic    [0:`NODES-1][0:`N-1][0:`PH_TABLE_DEPTH-1] test_max_pheromone_value;
    logic    [0:`NODES-1][0:`N-1][0:`PH_TABLE_DEPTH-1] test_min_pheromone_value;
    logic    [0:`NODES-1][0:`N-1][$clog2(`N)-1:0] test_max_pheromone_column;
    logic    [0:`NODES-1][0:`N-1][$clog2(`N)-1:0] test_min_pheromone_column;
+   logic [0:`NODES-1][0:`N-1][3:0] test_max_en_value;
+   logic [0:`NODES-1][0:`N-1][3:0] test_min_en_value;
+   logic [0:`NODES-1][0:`N-1][$clog2(`N)-1:0] test_max_en_column;
+   logic [0:`NODES-1][0:`N-1][$clog2(`N)-1:0] test_min_en_column;
    logic    [0:`NODES-1][0:`N-1][0:`M-1] test_tb_o_output_req;
    // AA.sv ----------------------------------------------------------------------
    logic    [0:`NODES-1][0:`N-1][0:`M-1] test_l_output_req;
    logic    [0:`NODES-1][0:`N-1][0:`M-1] test_output_req_AAtoSC;
    // SC.sv ----------------------------------------------------------------------
    logic    [0:`NODES-1][0:`N-1][0:`M-1] test_l_req_matrix_SC;
+   logic [0:`NODES-1][0:`N-1][4:0] test_l_ph;
    	
 	// ===============================================  链接network模块端口的变量定义  =========================================================
 	
@@ -202,12 +205,16 @@ module tb_network
 						.test_select_neighbor(test_select_neighbor),
 						.test_tb_o_output_req(test_tb_o_output_req),
 						
-						.test_pheromones(test_pheromones),
 						.test_max_pheromone_value(test_max_pheromone_value),
 						.test_min_pheromone_value(test_min_pheromone_value),
   .test_max_pheromone_column(test_max_pheromone_column),
   .test_min_pheromone_column(test_min_pheromone_column),
-                  .test_avail_directions(test_avail_directions)
+   .test_max_en_value(test_max_en_value),
+   .test_min_en_value(test_min_en_value),
+   .test_max_en_column(test_max_en_column),
+   .test_min_en_column(test_min_en_column),
+                  .test_avail_directions(test_avail_directions),
+   .test_l_ph(test_l_ph)
    );
    
    // =============================================  生成 各PE结点的 FIFO 模块  ===========================================================
@@ -251,8 +258,8 @@ module tb_network
 		   if(traffic_type==2)begin// transpose
 				for (int y = 0; y < `Y_NODES; y++) begin
 					for (int x = 0; x < `X_NODES; x++) begin
-//						rand_x_dest[y*`X_NODES+x] <= y;
-//						rand_y_dest[y*`X_NODES+x] <= x;
+//						rand_x_dest[y*`X_NODES+x] <= y; // another transpose type
+//						rand_y_dest[y*`X_NODES+x] <= x; // another transpose type
 						rand_x_dest[y*`X_NODES+x] <= `X_NODES-1-y;
 						rand_y_dest[y*`X_NODES+x] <= `Y_NODES-1-x;
 					end
@@ -336,7 +343,7 @@ module tb_network
          packet_count <= packet_count + 1;
 
          for(int i=0; i<`NODES; i++) begin
-            if(f_total_i_data_count_all < (WARMUP_PACKETS+MEASURE_PACKETS+DRAIN_PACKETS))begin
+            if(f_time < (WARMUP_TIME+MEASURE_TIME+DRAIN_TIME))begin
                i_data_FF[i].x_dest <= rand_x_dest[i];
                i_data_FF[i].y_dest <= rand_y_dest[i];
                
@@ -350,15 +357,15 @@ module tb_network
 							i_data_FF[i].ant <= 1;
 							if(i_data_FF[i].x_dest>i_data_FF[i].x_source)begin
 							   if(i_data_FF[i].y_dest>i_data_FF[i].y_source)begin
-							      i_data_FF[i].pheromone_value <= ((i_data_FF[i].x_dest-i_data_FF[i].x_source) + (i_data_FF[i].y_dest-i_data_FF[i].y_source))*4;
+							      i_data_FF[i].pheromone_value <= ((i_data_FF[i].x_dest-i_data_FF[i].x_source) + (i_data_FF[i].y_dest-i_data_FF[i].y_source))*10;
 								end else begin
-								   i_data_FF[i].pheromone_value <= ((i_data_FF[i].x_dest-i_data_FF[i].x_source) + (i_data_FF[i].y_source-i_data_FF[i].y_dest))*4;
+								   i_data_FF[i].pheromone_value <= ((i_data_FF[i].x_dest-i_data_FF[i].x_source) + (i_data_FF[i].y_source-i_data_FF[i].y_dest))*10;
 							   end
 							end else begin
 							   if(i_data_FF[i].y_dest>i_data_FF[i].y_source)begin
-							      i_data_FF[i].pheromone_value <= ((i_data_FF[i].x_source-i_data_FF[i].x_dest) + (i_data_FF[i].y_dest-i_data_FF[i].y_source))*4;
+							      i_data_FF[i].pheromone_value <= ((i_data_FF[i].x_source-i_data_FF[i].x_dest) + (i_data_FF[i].y_dest-i_data_FF[i].y_source))*10;
 								end else begin
-								   i_data_FF[i].pheromone_value <= ((i_data_FF[i].x_source-i_data_FF[i].x_dest) + (i_data_FF[i].y_source-i_data_FF[i].y_dest))*4;
+								   i_data_FF[i].pheromone_value <= ((i_data_FF[i].x_source-i_data_FF[i].x_dest) + (i_data_FF[i].y_source-i_data_FF[i].y_dest))*10;
 							   end
 							end
 						end else begin
@@ -372,7 +379,7 @@ module tb_network
 						i_data_FF[i].ant <= 0;
 					end
 					
-               if(f_total_i_data_count_all >= WARMUP_PACKETS && f_total_i_data_count_all < (WARMUP_PACKETS+MEASURE_PACKETS)) begin
+               if(f_time >= WARMUP_TIME && f_time < (WARMUP_TIME+MEASURE_TIME)) begin
                   i_data_FF[i].measure <= 1;
                end else begin
                   i_data_FF[i].measure <= 0;
@@ -381,16 +388,18 @@ module tb_network
                //end
             end else begin
                i_data_val_FF[i] <= 0;
-					f_time_finish <= (f_time_finish==0)? f_time : f_time_finish;
+				   if(f_total_o_data_count_all == f_total_i_data_count_all)begin
+					   f_time_finish <= (f_time_finish==0)? f_time : f_time_finish;
+					end
             end
          end
       end
    end
 
    // ======================================================  测试  ==============================================================
-   //parameter integer WARMUP_PACKETS = 1000, // Number of packets to warm-up the network
-   //parameter integer MEASURE_PACKETS = 5000, // Number of packets to be measured
-   //parameter integer DRAIN_PACKETS = 3000, // Number of packets to drain the network
+   //parameter integer WARMUP_TIME = 1000, // Number of packets to warm-up the network
+   //parameter integer MEASURE_TIME = 5000, // Number of packets to be measured
+   //parameter integer DRAIN_TIME = 3000, // Number of packets to drain the network
 
    // ======================================================  测试  ==============================================================
 
@@ -495,16 +504,9 @@ module tb_network
             f_measure_port_o_packet_count_forward[i]  <= 0;
             f_measure_port_o_packet_count_backward[i] <= 0;
          end
-		   f_throughput_cycle_count <= 0;
       end else begin
-         if(   (f_total_o_data_count_all >= WARMUP_PACKETS) 
-            && (f_total_o_data_count_all < (WARMUP_PACKETS + MEASURE_PACKETS)))begin
-		      f_throughput_cycle_count <= f_throughput_cycle_count+1;
-			end
          for(int i=0; i<`NODES; i++) begin
-            if(l_data_val_FFtoN[i] && i_en_FF[i]
-				                       && (f_total_i_data_count_all >= WARMUP_PACKETS) 
-                                   && (f_total_i_data_count_all < (WARMUP_PACKETS + MEASURE_PACKETS)))begin
+            if(l_data_val_FFtoN[i] && i_en_FF[i] && (WARMUP_TIME <= f_time) && (f_time < (WARMUP_TIME + MEASURE_TIME)))begin
                f_measure_port_i_packet_count_all[i] <= f_measure_port_i_packet_count_all[i] + 1;
                   
                if(l_data_FFtoN[i].ant == 0) begin
@@ -516,8 +518,7 @@ module tb_network
                   f_measure_port_i_packet_count_backward[i] <= f_measure_port_i_packet_count_backward[i] + 1;
                end
             end
-            if(o_data_val_N[i] && (f_total_o_data_count_all >= WARMUP_PACKETS) 
-                               && (f_total_o_data_count_all < (WARMUP_PACKETS + MEASURE_PACKETS)))begin
+            if(o_data_val_N[i] && (WARMUP_TIME <= f_time) && (f_time < (WARMUP_TIME + MEASURE_TIME)))begin
                if(o_data_N[i].ant == 0) begin
                   f_measure_port_o_packet_count_all[i] <= f_measure_port_o_packet_count_all[i] + 1;
                   f_measure_port_o_packet_count_normal[i] <= f_measure_port_o_packet_count_normal[i] + 1;
@@ -582,12 +583,12 @@ module tb_network
       f_throughput_o_forward  = 0;
       f_throughput_o_backward = 0;
 
-      if(`warmup_packets_num != 0) begin
-         f_throughput_o_all      = (f_measure_total_o_packet_count_all     / (f_throughput_cycle_count * `NODES));
-         f_throughput_o_normal   = (f_measure_total_o_packet_count_normal  / (f_throughput_cycle_count * `NODES));
-         f_throughput_o_ant      = (f_measure_total_o_packet_count_ant     / (f_throughput_cycle_count * `NODES));
-         f_throughput_o_forward  = (f_measure_total_o_packet_count_forward / (f_throughput_cycle_count * `NODES));
-         f_throughput_o_backward = (f_measure_total_o_packet_count_backward/ (f_throughput_cycle_count * `NODES));
+      if(`warmup_time_num != 0) begin
+         f_throughput_o_all      = (f_measure_total_o_packet_count_all     / (MEASURE_TIME * `NODES));
+         f_throughput_o_normal   = (f_measure_total_o_packet_count_normal  / (MEASURE_TIME * `NODES));
+         f_throughput_o_ant      = (f_measure_total_o_packet_count_ant     / (MEASURE_TIME * `NODES));
+         f_throughput_o_forward  = (f_measure_total_o_packet_count_forward / (MEASURE_TIME * `NODES));
+         f_throughput_o_backward = (f_measure_total_o_packet_count_backward/ (MEASURE_TIME * `NODES));
       end
    end
 
@@ -781,7 +782,7 @@ module tb_network
 	
    // Simulation:  Run Period -------------------------------------
    initial begin
-	   #(CLK_PERIOD * `warmup_packets_num*50) $finish;
+	   #(CLK_PERIOD * RUNNING_TIME) $finish;
    end
 			
 /************************************************************************************************************************************************
@@ -800,16 +801,14 @@ module tb_network
 	
 	*************************************************************************************************************************************/
 	
-         if(f_time % 100 == 0 
-            && (f_total_i_data_count_all != f_total_o_data_count_all
-                || f_total_i_data_count_all < (WARMUP_PACKETS+MEASURE_PACKETS+DRAIN_PACKETS))) begin
+         if(f_time % 100 == 0 && (f_time < (WARMUP_TIME+MEASURE_TIME+DRAIN_TIME) || f_total_i_data_count_all > f_total_o_data_count_all)) begin
             $display("[ %g ]:  Transmitted %g packets,  Received %g packets   0:%g  1:%g  2:%g  3:%g  %g:%g",
                       f_time,  f_total_i_data_count_all,f_total_o_data_count_all,
 				  f_port_o_data_count_all[0],f_port_o_data_count_all[1],f_port_o_data_count_all[2],f_port_o_data_count_all[3],`NODES,f_port_o_data_count_all[`NODES-1]);
          end
 			
          //show total packets message in the end
-         if (f_time == `warmup_packets_num*50-1) begin
+         if (f_time == RUNNING_TIME-1) begin
             $display("");
             $display(" # Total cycles: %g",f_time_finish-f_time_begin);
             $display(" # Total packets transmitted: %g, # Total packets received: %g",f_total_i_data_count_all, f_total_o_data_count_all);
@@ -887,9 +886,9 @@ module tb_network
     "num_nodes":`NODES,
     "packet_injection_rate":PACKET_RATE,
     "aco_packet_injection_rate":ANT_PACKET_RATE,
-	 "warmup_packets":`WARMUP_PACKETS,
-	 "measure_packets":MEASURE_PACKETS,
-    "drain_packets":DRAIN_PACKETS,
+	 "WARMUP_TIME":`WARMUP_TIME,
+	 "MEASURE_TIME":MEASURE_TIME,
+    "DRAIN_TIME":DRAIN_TIME,
     "router_input_queue_depth":`INPUT_QUEUE_DEPTH,
 	 "PEnode_input_queue_depth":NODE_QUEUE_DEPTH,
     "create_ant_packet_period":`CREATE_ANT_PERIOD,
@@ -901,9 +900,9 @@ module tb_network
 	 "hotspot_packet_injection_rate":HOTSPOT_PACKET_RATE
 }
 { //stats
-    "max_cycles":`warmup_packets_num*50,
+    "max_cycles":RUNNING_TIME,
     "total_cycles":f_time_finish-f_time_begin,
-    "measure_cycles":MEASURE_PACKETS,
+    "measure_cycles":MEASURE_TIME,
     "throughput":f_throughput_o_all,
     "num_packets_transmitted":f_measure_total_i_packet_count_all,
     "num_packets_received":f_measure_total_o_packet_count_all,
@@ -922,7 +921,7 @@ module tb_network
 }				
 	function void wr_file(file_id,f_time,f_time_begin,f_total_i_data_count_all,f_total_o_data_count_all,f_measure_total_i_packet_count_all,f_measure_total_o_packet_count_all,f_throughput_o_all,f_average_latency_all,f_max_latency_all,f_measure_total_i_packet_count_normal,f_measure_total_o_packet_count_normal,f_throughput_o_normal,f_average_latency_normal,f_max_latency_normal,f_measure_total_i_packet_count_ant,f_measure_total_o_packet_count_ant,f_throughput_o_ant,f_average_latency_ant,f_max_latency_ant);
 		
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
 				$fdisplay(file_id,"");
 				$fdisplay(file_id,"Total cycles,%g,f_time_finish-f_time_begin);
@@ -963,13 +962,13 @@ module tb_network
 			if(PACKET_RATE == 1 && traffic_type == 1 && routing_type == 1 && selection_type == 1)begin
 				/*wr_file(file_id,f_time,f_time_begin,f_total_i_data_count_all,f_total_o_data_count_all,f_measure_total_i_packet_count_all,f_measure_total_o_packet_count_all,f_throughput_o_all,f_average_latency_all,f_max_latency_all,f_measure_total_i_packet_count_normal,f_measure_total_o_packet_count_normal,f_throughput_o_normal,f_average_latency_normal,f_max_latency_normal,f_measure_total_i_packet_count_ant,f_measure_total_o_packet_count_ant,f_throughput_o_ant,f_average_latency_ant,f_max_latency_ant);*/
 				
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_uniform/r_xy/s_random/stats.json");
 	         $fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -992,23 +991,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_uniform/r_xy/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -1020,14 +1017,14 @@ module tb_network
 
 			if(PACKET_RATE == 1 && traffic_type == 1 && routing_type == 2 && selection_type == 1)begin
 
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_uniform/r_odd_even/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -1049,23 +1046,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_uniform/r_odd_even/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -1077,14 +1072,14 @@ module tb_network
 
 			if(PACKET_RATE == 1 && traffic_type == 1 && routing_type == 2 && selection_type == 2)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_uniform/r_odd_even/s_buffer_level/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -1106,23 +1101,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_uniform/r_odd_even/s_buffer_level/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -1134,14 +1127,14 @@ module tb_network
 
 			if(PACKET_RATE == 1 && traffic_type == 1 && routing_type == 2 && selection_type == 3)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_uniform/r_odd_even/s_aco/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -1163,23 +1156,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_uniform/r_odd_even/s_aco/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -1190,14 +1181,14 @@ module tb_network
 	*************************************************************************************************************************************/
 			if(PACKET_RATE == 1 && traffic_type == 2 && routing_type == 1 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_transpose/r_xy/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -1219,23 +1210,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_transpose/r_xy/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -1247,14 +1236,14 @@ module tb_network
 
 			if(PACKET_RATE == 1 && traffic_type == 2 && routing_type == 2 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_transpose/r_odd_even/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -1276,23 +1265,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_transpose/r_odd_even/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -1304,14 +1291,14 @@ module tb_network
 
 			if(PACKET_RATE == 1 && traffic_type == 2 && routing_type == 2 && selection_type == 2)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_transpose/r_odd_even/s_buffer_level/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -1333,23 +1320,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_transpose/r_odd_even/s_buffer_level/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -1361,14 +1346,14 @@ module tb_network
 
 			if(PACKET_RATE == 1 && traffic_type == 2 && routing_type == 2 && selection_type == 3)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_transpose/r_odd_even/s_aco/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -1390,23 +1375,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_transpose/r_odd_even/s_aco/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -1417,14 +1400,14 @@ module tb_network
 	*************************************************************************************************************************************/
 			if(PACKET_RATE == 1 && traffic_type == 3 && routing_type == 1 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_hotspot/r_xy/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -1446,23 +1429,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_hotspot/r_xy/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -1474,14 +1455,14 @@ module tb_network
 
 			if(PACKET_RATE == 1 && traffic_type == 3 && routing_type == 2 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_hotspot/r_odd_even/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -1503,23 +1484,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_hotspot/r_odd_even/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -1531,14 +1510,14 @@ module tb_network
 
 			if(PACKET_RATE == 1 && traffic_type == 3 && routing_type == 2 && selection_type == 2)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_hotspot/r_odd_even/s_buffer_level/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -1560,23 +1539,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_hotspot/r_odd_even/s_buffer_level/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -1588,14 +1565,14 @@ module tb_network
 
 			if(PACKET_RATE == 1 && traffic_type == 3 && routing_type == 2 && selection_type == 3)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_hotspot/r_odd_even/s_aco/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -1617,23 +1594,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_1/t_hotspot/r_odd_even/s_aco/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -1650,14 +1625,14 @@ module tb_network
 	*************************************************************************************************************************************/
 			if(PACKET_RATE == 5 && traffic_type == 1 && routing_type == 1 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_uniform/r_xy/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -1679,23 +1654,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_uniform/r_xy/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -1707,14 +1680,14 @@ module tb_network
 
 			if(PACKET_RATE == 5 && traffic_type == 1 && routing_type == 2 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_uniform/r_odd_even/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -1736,23 +1709,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_uniform/r_odd_even/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -1764,14 +1735,14 @@ module tb_network
 
 			if(PACKET_RATE == 5 && traffic_type == 1 && routing_type == 2 && selection_type == 2)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_uniform/r_odd_even/s_buffer_level/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -1793,23 +1764,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_uniform/r_odd_even/s_buffer_level/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -1821,14 +1790,14 @@ module tb_network
 
 			if(PACKET_RATE == 5 && traffic_type == 1 && routing_type == 2 && selection_type == 3)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_uniform/r_odd_even/s_aco/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -1850,23 +1819,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_uniform/r_odd_even/s_aco/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -1877,14 +1844,14 @@ module tb_network
 	*************************************************************************************************************************************/
 			if(PACKET_RATE == 5 && traffic_type == 2 && routing_type == 1 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_transpose/r_xy/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -1906,23 +1873,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_transpose/r_xy/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -1934,14 +1899,14 @@ module tb_network
 
 			if(PACKET_RATE == 5 && traffic_type == 2 && routing_type == 2 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_transpose/r_odd_even/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -1963,23 +1928,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_transpose/r_odd_even/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -1991,14 +1954,14 @@ module tb_network
 
 			if(PACKET_RATE == 5 && traffic_type == 2 && routing_type == 2 && selection_type == 2)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_transpose/r_odd_even/s_buffer_level/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -2020,23 +1983,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_transpose/r_odd_even/s_buffer_level/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -2048,14 +2009,14 @@ module tb_network
 
 			if(PACKET_RATE == 5 && traffic_type == 2 && routing_type == 2 && selection_type == 3)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_transpose/r_odd_even/s_aco/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -2077,23 +2038,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_transpose/r_odd_even/s_aco/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -2104,14 +2063,14 @@ module tb_network
 	*************************************************************************************************************************************/
 			if(PACKET_RATE == 5 && traffic_type == 3 && routing_type == 1 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_hotspot/r_xy/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -2133,23 +2092,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_hotspot/r_xy/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -2161,14 +2118,14 @@ module tb_network
 
 			if(PACKET_RATE == 5 && traffic_type == 3 && routing_type == 2 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_hotspot/r_odd_even/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -2190,23 +2147,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_hotspot/r_odd_even/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -2218,14 +2173,14 @@ module tb_network
 
 			if(PACKET_RATE == 5 && traffic_type == 3 && routing_type == 2 && selection_type == 2)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_hotspot/r_odd_even/s_buffer_level/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -2247,23 +2202,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_hotspot/r_odd_even/s_buffer_level/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -2275,14 +2228,14 @@ module tb_network
 
 			if(PACKET_RATE == 5 && traffic_type == 3 && routing_type == 2 && selection_type == 3)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_hotspot/r_odd_even/s_aco/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -2304,23 +2257,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_5/t_hotspot/r_odd_even/s_aco/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -2337,14 +2288,14 @@ module tb_network
 	*************************************************************************************************************************************/
 			if(PACKET_RATE == 10 && traffic_type == 1 && routing_type == 1 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_uniform/r_xy/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -2366,23 +2317,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_uniform/r_xy/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -2394,14 +2343,14 @@ module tb_network
 
 			if(PACKET_RATE == 10 && traffic_type == 1 && routing_type == 2 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_uniform/r_odd_even/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -2423,23 +2372,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_uniform/r_odd_even/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -2451,14 +2398,14 @@ module tb_network
 
 			if(PACKET_RATE == 10 && traffic_type == 1 && routing_type == 2 && selection_type == 2)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_uniform/r_odd_even/s_buffer_level/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -2480,23 +2427,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_uniform/r_odd_even/s_buffer_level/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -2508,14 +2453,14 @@ module tb_network
 
 			if(PACKET_RATE == 10 && traffic_type == 1 && routing_type == 2 && selection_type == 3)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_uniform/r_odd_even/s_aco/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -2537,23 +2482,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_uniform/r_odd_even/s_aco/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -2564,14 +2507,14 @@ module tb_network
 	*************************************************************************************************************************************/
 			if(PACKET_RATE == 10 && traffic_type == 2 && routing_type == 1 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_transpose/r_xy/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -2593,23 +2536,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_transpose/r_xy/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -2621,14 +2562,14 @@ module tb_network
 
 			if(PACKET_RATE == 10 && traffic_type == 2 && routing_type == 2 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_transpose/r_odd_even/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -2650,23 +2591,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_transpose/r_odd_even/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -2678,14 +2617,14 @@ module tb_network
 
 			if(PACKET_RATE == 10 && traffic_type == 2 && routing_type == 2 && selection_type == 2)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_transpose/r_odd_even/s_buffer_level/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -2707,23 +2646,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_transpose/r_odd_even/s_buffer_level/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -2735,14 +2672,14 @@ module tb_network
 
 			if(PACKET_RATE == 10 && traffic_type == 2 && routing_type == 2 && selection_type == 3)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_transpose/r_odd_even/s_aco/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -2764,23 +2701,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_transpose/r_odd_even/s_aco/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -2791,14 +2726,14 @@ module tb_network
 	*************************************************************************************************************************************/
 			if(PACKET_RATE == 10 && traffic_type == 3 && routing_type == 1 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_hotspot/r_xy/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -2820,23 +2755,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_hotspot/r_xy/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -2848,14 +2781,14 @@ module tb_network
 
 			if(PACKET_RATE == 10 && traffic_type == 3 && routing_type == 2 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_hotspot/r_odd_even/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -2877,23 +2810,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_hotspot/r_odd_even/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -2907,12 +2838,12 @@ module tb_network
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_hotspot/r_odd_even/s_buffer_level/stats.json");
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -2934,23 +2865,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_hotspot/r_odd_even/s_buffer_level/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -2962,14 +2891,14 @@ module tb_network
 
 			if(PACKET_RATE == 10 && traffic_type == 3 && routing_type == 2 && selection_type == 3)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_hotspot/r_odd_even/s_aco/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -2991,23 +2920,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_10/t_hotspot/r_odd_even/s_aco/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -3028,14 +2955,14 @@ module tb_network
 	*************************************************************************************************************************************/
 			if(PACKET_RATE == 20 && traffic_type == 1 && routing_type == 1 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_uniform/r_xy/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -3057,23 +2984,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_uniform/r_xy/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -3085,14 +3010,14 @@ module tb_network
 
 			if(PACKET_RATE == 20 && traffic_type == 1 && routing_type == 2 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_uniform/r_odd_even/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -3114,23 +3039,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_uniform/r_odd_even/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -3142,14 +3065,14 @@ module tb_network
 
 			if(PACKET_RATE == 20 && traffic_type == 1 && routing_type == 2 && selection_type == 2)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_uniform/r_odd_even/s_buffer_level/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -3171,23 +3094,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_uniform/r_odd_even/s_buffer_level/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -3199,14 +3120,14 @@ module tb_network
 
 			if(PACKET_RATE == 20 && traffic_type == 1 && routing_type == 2 && selection_type == 3)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_uniform/r_odd_even/s_aco/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -3228,23 +3149,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_uniform/r_odd_even/s_aco/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -3255,14 +3174,14 @@ module tb_network
 	*************************************************************************************************************************************/
 			if(PACKET_RATE == 20 && traffic_type == 2 && routing_type == 1 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_transpose/r_xy/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -3284,23 +3203,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_transpose/r_xy/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -3312,14 +3229,14 @@ module tb_network
 
 			if(PACKET_RATE == 20 && traffic_type == 2 && routing_type == 2 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_transpose/r_odd_even/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -3341,23 +3258,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_transpose/r_odd_even/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -3369,14 +3284,14 @@ module tb_network
 
 			if(PACKET_RATE == 20 && traffic_type == 2 && routing_type == 2 && selection_type == 2)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_transpose/r_odd_even/s_buffer_level/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -3398,23 +3313,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_transpose/r_odd_even/s_buffer_level/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -3426,14 +3339,14 @@ module tb_network
 
 			if(PACKET_RATE == 20 && traffic_type == 2 && routing_type == 2 && selection_type == 3)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_transpose/r_odd_even/s_aco/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -3455,23 +3368,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_transpose/r_odd_even/s_aco/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -3482,14 +3393,14 @@ module tb_network
 	*************************************************************************************************************************************/
 			if(PACKET_RATE == 20 && traffic_type == 3 && routing_type == 1 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_hotspot/r_xy/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -3511,23 +3422,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_hotspot/r_xy/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -3539,14 +3448,14 @@ module tb_network
 
 			if(PACKET_RATE == 20 && traffic_type == 3 && routing_type == 2 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_hotspot/r_odd_even/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -3568,23 +3477,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_hotspot/r_odd_even/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -3596,14 +3503,14 @@ module tb_network
 
 			if(PACKET_RATE == 20 && traffic_type == 3 && routing_type == 2 && selection_type == 2)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_hotspot/r_odd_even/s_buffer_level/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -3625,23 +3532,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_hotspot/r_odd_even/s_buffer_level/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -3653,14 +3558,14 @@ module tb_network
 
 			if(PACKET_RATE == 20 && traffic_type == 3 && routing_type == 2 && selection_type == 3)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_hotspot/r_odd_even/s_aco/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -3682,23 +3587,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_20/t_hotspot/r_odd_even/s_aco/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -3718,14 +3621,14 @@ module tb_network
 	*************************************************************************************************************************************/
 			if(PACKET_RATE == 50 && traffic_type == 1 && routing_type == 1 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_uniform/r_xy/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -3747,23 +3650,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_uniform/r_xy/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -3775,14 +3676,14 @@ module tb_network
 
 			if(PACKET_RATE == 50 && traffic_type == 1 && routing_type == 2 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_uniform/r_odd_even/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -3804,23 +3705,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_uniform/r_odd_even/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -3832,14 +3731,14 @@ module tb_network
 
 			if(PACKET_RATE == 50 && traffic_type == 1 && routing_type == 2 && selection_type == 2)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_uniform/r_odd_even/s_buffer_level/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -3861,23 +3760,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_uniform/r_odd_even/s_buffer_level/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -3889,14 +3786,14 @@ module tb_network
 
 			if(PACKET_RATE == 50 && traffic_type == 1 && routing_type == 2 && selection_type == 3)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_uniform/r_odd_even/s_aco/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -3918,23 +3815,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_uniform/r_odd_even/s_aco/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -3945,14 +3840,14 @@ module tb_network
 	*************************************************************************************************************************************/
 			if(PACKET_RATE == 50 && traffic_type == 2 && routing_type == 1 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_transpose/r_xy/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -3974,23 +3869,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_transpose/r_xy/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -4002,14 +3895,14 @@ module tb_network
 
 			if(PACKET_RATE == 50 && traffic_type == 2 && routing_type == 2 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_transpose/r_odd_even/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -4031,23 +3924,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_transpose/r_odd_even/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -4059,14 +3950,14 @@ module tb_network
 
 			if(PACKET_RATE == 50 && traffic_type == 2 && routing_type == 2 && selection_type == 2)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_transpose/r_odd_even/s_buffer_level/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -4088,23 +3979,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_transpose/r_odd_even/s_buffer_level/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -4116,14 +4005,14 @@ module tb_network
 
 			if(PACKET_RATE == 50 && traffic_type == 2 && routing_type == 2 && selection_type == 3)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_transpose/r_odd_even/s_aco/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -4145,23 +4034,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_transpose/r_odd_even/s_aco/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -4172,14 +4059,14 @@ module tb_network
 	*************************************************************************************************************************************/
 			if(PACKET_RATE == 50 && traffic_type == 3 && routing_type == 1 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_hotspot/r_xy/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -4201,23 +4088,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_hotspot/r_xy/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -4229,14 +4114,14 @@ module tb_network
 
 			if(PACKET_RATE == 50 && traffic_type == 3 && routing_type == 2 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_hotspot/r_odd_even/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -4258,23 +4143,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_hotspot/r_odd_even/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -4286,14 +4169,14 @@ module tb_network
 
 			if(PACKET_RATE == 50 && traffic_type == 3 && routing_type == 2 && selection_type == 2)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_hotspot/r_odd_even/s_buffer_level/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -4315,23 +4198,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_hotspot/r_odd_even/s_buffer_level/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -4343,14 +4224,14 @@ module tb_network
 
 			if(PACKET_RATE == 50 && traffic_type == 3 && routing_type == 2 && selection_type == 3)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_hotspot/r_odd_even/s_aco/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -4372,23 +4253,21 @@ module tb_network
 "/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_50/t_hotspot/r_odd_even/s_aco/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -4402,16 +4281,16 @@ module tb_network
    /*************************************************************************************************************************************
 
 	*************************************************************************************************************************************/
-			if(PACKET_RATE == 80 && traffic_type == 1 && routing_type == 1 && selection_type == 1)begin
+			if(PACKET_RATE == 60 && traffic_type == 1 && routing_type == 1 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_uniform/r_xy/s_random/stats.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_uniform/r_xy/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -4430,26 +4309,24 @@ module tb_network
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_uniform/r_xy/s_random/config.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_uniform/r_xy/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -4459,16 +4336,16 @@ module tb_network
 
 	*************************************************************************************************************************************/
 
-			if(PACKET_RATE == 80 && traffic_type == 1 && routing_type == 2 && selection_type == 1)begin
+			if(PACKET_RATE == 60 && traffic_type == 1 && routing_type == 2 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_uniform/r_odd_even/s_random/stats.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_uniform/r_odd_even/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -4487,26 +4364,24 @@ module tb_network
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_uniform/r_odd_even/s_random/config.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_uniform/r_odd_even/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -4516,16 +4391,16 @@ module tb_network
 
 	*************************************************************************************************************************************/
 
-			if(PACKET_RATE == 80 && traffic_type == 1 && routing_type == 2 && selection_type == 2)begin
+			if(PACKET_RATE == 60 && traffic_type == 1 && routing_type == 2 && selection_type == 2)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_uniform/r_odd_even/s_buffer_level/stats.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_uniform/r_odd_even/s_buffer_level/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -4544,26 +4419,24 @@ module tb_network
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_uniform/r_odd_even/s_buffer_level/config.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_uniform/r_odd_even/s_buffer_level/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -4573,16 +4446,16 @@ module tb_network
 
 	*************************************************************************************************************************************/
 
-			if(PACKET_RATE == 80 && traffic_type == 1 && routing_type == 2 && selection_type == 3)begin
+			if(PACKET_RATE == 60 && traffic_type == 1 && routing_type == 2 && selection_type == 3)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_uniform/r_odd_even/s_aco/stats.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_uniform/r_odd_even/s_aco/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -4601,26 +4474,24 @@ module tb_network
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_uniform/r_odd_even/s_aco/config.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_uniform/r_odd_even/s_aco/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -4629,16 +4500,16 @@ module tb_network
    /*************************************************************************************************************************************
 
 	*************************************************************************************************************************************/
-			if(PACKET_RATE == 80 && traffic_type == 2 && routing_type == 1 && selection_type == 1)begin
+			if(PACKET_RATE == 60 && traffic_type == 2 && routing_type == 1 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_transpose/r_xy/s_random/stats.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_transpose/r_xy/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -4657,26 +4528,24 @@ module tb_network
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_transpose/r_xy/s_random/config.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_transpose/r_xy/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -4686,16 +4555,16 @@ module tb_network
 
 	*************************************************************************************************************************************/
 
-			if(PACKET_RATE == 80 && traffic_type == 2 && routing_type == 2 && selection_type == 1)begin
+			if(PACKET_RATE == 60 && traffic_type == 2 && routing_type == 2 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_transpose/r_odd_even/s_random/stats.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_transpose/r_odd_even/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -4714,26 +4583,24 @@ module tb_network
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_transpose/r_odd_even/s_random/config.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_transpose/r_odd_even/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -4743,16 +4610,16 @@ module tb_network
 
 	*************************************************************************************************************************************/
 
-			if(PACKET_RATE == 80 && traffic_type == 2 && routing_type == 2 && selection_type == 2)begin
+			if(PACKET_RATE == 60 && traffic_type == 2 && routing_type == 2 && selection_type == 2)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_transpose/r_odd_even/s_buffer_level/stats.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_transpose/r_odd_even/s_buffer_level/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -4771,26 +4638,24 @@ module tb_network
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_transpose/r_odd_even/s_buffer_level/config.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_transpose/r_odd_even/s_buffer_level/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -4800,16 +4665,16 @@ module tb_network
 
 	*************************************************************************************************************************************/
 
-			if(PACKET_RATE == 80 && traffic_type == 2 && routing_type == 2 && selection_type == 3)begin
+			if(PACKET_RATE == 60 && traffic_type == 2 && routing_type == 2 && selection_type == 3)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_transpose/r_odd_even/s_aco/stats.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_transpose/r_odd_even/s_aco/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -4828,26 +4693,24 @@ module tb_network
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_transpose/r_odd_even/s_aco/config.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_transpose/r_odd_even/s_aco/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -4856,16 +4719,16 @@ module tb_network
    /*************************************************************************************************************************************
 
 	*************************************************************************************************************************************/
-			if(PACKET_RATE == 80 && traffic_type == 3 && routing_type == 1 && selection_type == 1)begin
+			if(PACKET_RATE == 60 && traffic_type == 3 && routing_type == 1 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_hotspot/r_xy/s_random/stats.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_hotspot/r_xy/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -4884,83 +4747,24 @@ module tb_network
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_hotspot/r_xy/s_random/config.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_hotspot/r_xy/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
-	         $fdisplay(file_id,"}");
-				$fclose(file_id);
-			end
-			end
-			
-   /*************************************************************************************************************************************
-
-	*************************************************************************************************************************************/
-
-			if(PACKET_RATE == 80 && traffic_type == 3 && routing_type == 2 && selection_type == 1)begin
-			   
-			if (f_time == `warmup_packets_num*50-1) begin
-	
-            file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_hotspot/r_odd_even/s_random/stats.json");
-				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
-	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
-	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
-	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
-	         $fdisplay(file_id,"   \"average_packet_delay\":%g,",f_average_latency_all);
-	         $fdisplay(file_id,"   \"max_packet_delay\":%g,",f_max_latency_all);
-	         $fdisplay(file_id,"   \"packet.throughput\":%g,",f_throughput_o_normal);
-	         $fdisplay(file_id,"   \"packet.num_packets_transmitted\":%g,",f_measure_total_i_packet_count_normal);
-	         $fdisplay(file_id,"   \"packet.num_packets_received\":%g,",f_measure_total_o_packet_count_normal);
-	         $fdisplay(file_id,"   \"packet.average_packet_delay\":%g,",f_average_latency_normal);
-	         $fdisplay(file_id,"   \"packet.max_packet_delay\":%g,",f_max_latency_normal);
-	         $fdisplay(file_id,"   \"acopacket.throughput\":%g,",f_throughput_o_ant);
-	         $fdisplay(file_id,"   \"acopacket.num_packets_transmitted\":%g,",f_measure_total_i_packet_count_ant);
-	         $fdisplay(file_id,"   \"acopacket.num_packets_received\":%g,",f_measure_total_o_packet_count_ant);
-	         $fdisplay(file_id,"   \"acopacket.average_packet_delay\":%g,",f_average_latency_ant);
-	         $fdisplay(file_id,"   \"acopacket.max_packet_delay\":%g",f_max_latency_ant);
-	         $fdisplay(file_id,"}");
-				$fclose(file_id);
-            file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_hotspot/r_odd_even/s_random/config.json");
-            $fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
-				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
-				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
-				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
-				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
-				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
-				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -4970,16 +4774,16 @@ module tb_network
 
 	*************************************************************************************************************************************/
 
-			if(PACKET_RATE == 80 && traffic_type == 3 && routing_type == 2 && selection_type == 2)begin
+			if(PACKET_RATE == 60 && traffic_type == 3 && routing_type == 2 && selection_type == 1)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_hotspot/r_odd_even/s_buffer_level/stats.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_hotspot/r_odd_even/s_random/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -4998,26 +4802,24 @@ module tb_network
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_hotspot/r_odd_even/s_buffer_level/config.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_hotspot/r_odd_even/s_random/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
-				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
-				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end
@@ -5027,16 +4829,16 @@ module tb_network
 
 	*************************************************************************************************************************************/
 
-			if(PACKET_RATE == 80 && traffic_type == 3 && routing_type == 2 && selection_type == 3)begin
+			if(PACKET_RATE == 60 && traffic_type == 3 && routing_type == 2 && selection_type == 2)begin
 			   
-			if (f_time == `warmup_packets_num*50-1) begin
+			if (f_time == RUNNING_TIME-1) begin
 	
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_hotspot/r_odd_even/s_aco/stats.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_hotspot/r_odd_even/s_buffer_level/stats.json");
 				$fdisplay(file_id,"{");
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
 	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
 	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
 	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
@@ -5055,26 +4857,79 @@ module tb_network
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
             file_id = $fopen(
-"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_80/t_hotspot/r_odd_even/s_aco/config.json");
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_hotspot/r_odd_even/s_buffer_level/config.json");
             $fdisplay(file_id,"{");
 	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
-				$fdisplay(file_id,"   \"warmup_packets\":%g,",WARMUP_PACKETS);
-				$fdisplay(file_id,"   \"measure_packets\":%g,",MEASURE_PACKETS);
-				$fdisplay(file_id,"   \"drain_packets\":%g,",DRAIN_PACKETS);
-	         $fdisplay(file_id,"   \"max_cycles\":%g,",`warmup_packets_num*50);
-	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
-	         $fdisplay(file_id,"   \"measure_cycles\":%g,",f_throughput_cycle_count);
+				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
+				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
 				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
 				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
 				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
-				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/\",");
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
 				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
 				$fdisplay(file_id,"   \"selection\":\"aco\",");
-				$fdisplay(file_id,"   \"traffic\":\"hotspot\",");
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
+	         $fdisplay(file_id,"}");
+				$fclose(file_id);
+			end
+			end
+			
+   /*************************************************************************************************************************************
+
+	*************************************************************************************************************************************/
+
+			if(PACKET_RATE == 60 && traffic_type == 3 && routing_type == 2 && selection_type == 3)begin
+			   
+			if (f_time == RUNNING_TIME-1) begin
+	
+            file_id = $fopen(
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_hotspot/r_odd_even/s_aco/stats.json");
+				$fdisplay(file_id,"{");
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
+	         $fdisplay(file_id,"   \"total_cycles\":%g,",f_time_finish-f_time_begin);
+	         $fdisplay(file_id,"   \"measure_cycles\":%g,",MEASURE_TIME);
+	         $fdisplay(file_id,"   \"throughput\":%g,",f_throughput_o_all);
+	         $fdisplay(file_id,"   \"num_packets_transmitted\":%g,",f_measure_total_i_packet_count_all);
+	         $fdisplay(file_id,"   \"num_packets_received\":%g,",f_measure_total_o_packet_count_all);
+	         $fdisplay(file_id,"   \"average_packet_delay\":%g,",f_average_latency_all);
+	         $fdisplay(file_id,"   \"max_packet_delay\":%g,",f_max_latency_all);
+	         $fdisplay(file_id,"   \"packet.throughput\":%g,",f_throughput_o_normal);
+	         $fdisplay(file_id,"   \"packet.num_packets_transmitted\":%g,",f_measure_total_i_packet_count_normal);
+	         $fdisplay(file_id,"   \"packet.num_packets_received\":%g,",f_measure_total_o_packet_count_normal);
+	         $fdisplay(file_id,"   \"packet.average_packet_delay\":%g,",f_average_latency_normal);
+	         $fdisplay(file_id,"   \"packet.max_packet_delay\":%g,",f_max_latency_normal);
+	         $fdisplay(file_id,"   \"acopacket.throughput\":%g,",f_throughput_o_ant);
+	         $fdisplay(file_id,"   \"acopacket.num_packets_transmitted\":%g,",f_measure_total_i_packet_count_ant);
+	         $fdisplay(file_id,"   \"acopacket.num_packets_received\":%g,",f_measure_total_o_packet_count_ant);
+	         $fdisplay(file_id,"   \"acopacket.average_packet_delay\":%g,",f_average_latency_ant);
+	         $fdisplay(file_id,"   \"acopacket.max_packet_delay\":%g",f_max_latency_ant);
+	         $fdisplay(file_id,"}");
+				$fclose(file_id);
+            file_id = $fopen(
+"/media/jcq/e052d853-5bf0-41fb-9617-220923a0fe5f/Tools/FPGA/altera_lite/gh02-my_noc/my_noc/results/j_60/t_hotspot/r_odd_even/s_aco/config.json");
+            $fdisplay(file_id,"{");
+	         $fdisplay(file_id,"   \"num_nodes\":%g,",`NODES);
 				$fdisplay(file_id,"   \"packet_injection_rate\":%g,",PACKET_RATE);
 				$fdisplay(file_id,"   \"aco_packet_injection_rate\":%g,",ANT_PACKET_RATE);
-				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"hotspot_packet_injection_rate\":%g,",HOTSPOT_PACKET_RATE);
+				$fdisplay(file_id,"   \"WARMUP_TIME\":%g,",WARMUP_TIME);
+				$fdisplay(file_id,"   \"MEASURE_TIME\":%g,",MEASURE_TIME);
+				$fdisplay(file_id,"   \"DRAIN_TIME\":%g,",DRAIN_TIME);
+	         $fdisplay(file_id,"   \"max_cycles\":%g,",RUNNING_TIME);
+				$fdisplay(file_id,"   \"router_input_queue_depth\":%g,",`INPUT_QUEUE_DEPTH);
+				$fdisplay(file_id,"   \"PEnode_input_queue_depth\":%g,",NODE_QUEUE_DEPTH);
+				$fdisplay(file_id,"   \"create_ant_packet_period\":%g,",`CREATE_ANT_PERIOD);
+				$fdisplay(file_id,"   \"pheromone_table_value_width\":%g,",`PH_TABLE_DEPTH);
+				$fdisplay(file_id,"   \"result_dir\":\"results/j_10/t_hotspot/r_odd_even/s_aco/ \",");
+				$fdisplay(file_id,"   \"routing\":\"odd_even\",");
+				$fdisplay(file_id,"   \"selection\":\"aco\",");
+				$fdisplay(file_id,"   \"traffic\":\"hotspot\"");
 	         $fdisplay(file_id,"}");
 				$fclose(file_id);
 			end

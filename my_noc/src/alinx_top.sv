@@ -34,13 +34,17 @@ module alinx_top(
    logic    [0:`NODES-1][0:`N-1] test_update;
    logic    [0:`NODES-1][0:`N-1] test_select_neighbor;
    logic    [0:`NODES-1][0:`N-1][0:`M-1] test_tb_o_output_req;
-   // ant_routing_table.sv --------------------------------------------------------
-   logic    [0:`NODES-1][0:`NODES-1][0:`N-2][`PH_TABLE_DEPTH-1:0] test_pheromones;
+   // ant_routing_table.sv -------------------------------------------------------
    logic    [0:`NODES-1][0:`N-1][0:`PH_TABLE_DEPTH-1] test_max_pheromone_value;
    logic    [0:`NODES-1][0:`N-1][0:`PH_TABLE_DEPTH-1] test_min_pheromone_value;
    logic [0:`NODES-1][0:`N-1][$clog2(`N)-1:0] test_max_pheromone_column;
    logic [0:`NODES-1][0:`N-1][$clog2(`N)-1:0] test_min_pheromone_column;
+   logic [0:`NODES-1][0:`N-1][3:0] test_max_en_value;
+   logic [0:`NODES-1][0:`N-1][3:0] test_min_en_value;
+   logic [0:`NODES-1][0:`N-1][$clog2(`N)-1:0] test_max_en_column;
+   logic [0:`NODES-1][0:`N-1][$clog2(`N)-1:0] test_min_en_column;
    logic    [0:`NODES-1][0:`N-1][0:`M-1][1:0] test_avail_directions;
+   logic    [0:`NODES-1][0:`N-1][4:0] test_l_ph;
 	
    // ============================================================ network ====================================================
    network network(
@@ -69,12 +73,16 @@ module alinx_top(
                    .test_select_neighbor(test_select_neighbor),
                    .test_tb_o_output_req(test_tb_o_output_req),
                    
-                   .test_pheromones(test_pheromones),
                    .test_max_pheromone_value(test_max_pheromone_value),
                    .test_min_pheromone_value(test_min_pheromone_value),
   .test_max_pheromone_column(test_max_pheromone_column),
   .test_min_pheromone_column(test_min_pheromone_column),
-                   .test_avail_directions(test_avail_directions)
+   .test_max_en_value(test_max_en_value),
+   .test_min_en_value(test_min_en_value),
+   .test_max_en_column(test_max_en_column),
+   .test_min_en_column(test_min_en_column),
+                   .test_avail_directions(test_avail_directions),
+   .test_l_ph(test_l_ph)
                   );
 			
 endmodule
