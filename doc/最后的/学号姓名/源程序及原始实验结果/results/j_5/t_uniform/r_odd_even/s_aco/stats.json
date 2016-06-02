@@ -1,0 +1,20 @@
+{
+   "max_cycles":17000,
+   "total_cycles":13999,
+   "measure_cycles":10000,
+   "throughput":0.0501313,
+   "num_packets_transmitted":8017,
+   "num_packets_received":8021,
+   "average_packet_delay":13.8304,
+   "max_packet_delay":11120,
+   "packet.throughput":0.0496062,
+   "packet.num_packets_transmitted":7930,
+   "packet.num_packets_received":7937,
+   "packet.average_packet_delay":13.8105,
+   "packet.max_packet_delay":11120,
+   "acopacket.throughput":0.000525,
+   "acopacket.num_packets_transmitted":87,
+   "acopacket.num_packets_received":84,
+   "acopacket.average_packet_delay":15.7143,
+   "acopacket.max_packet_delay":10860
+}

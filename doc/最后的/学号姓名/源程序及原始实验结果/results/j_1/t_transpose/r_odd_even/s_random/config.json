@@ -1,0 +1,18 @@
+{
+   "num_nodes":16,
+   "packet_injection_rate":1,
+   "aco_packet_injection_rate":1,
+   "hotspot_packet_injection_rate":10,
+   "WARMUP_TIME":1000,
+   "MEASURE_TIME":10000,
+   "DRAIN_TIME":3000,
+   "max_cycles":17000,
+   "router_input_queue_depth":4,
+   "PEnode_input_queue_depth":20,
+   "create_ant_packet_period":100,
+   "pheromone_table_value_width":8,
+   "result_dir":"results/j_10/t_hotspot/r_odd_even/s_aco/ ",
+   "routing":"odd_even",
+   "selection":"aco",
+   "traffic":"hotspot"
+}
